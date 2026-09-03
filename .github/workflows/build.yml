@@ -29,4 +29,6 @@ jobs:
         run: rm -f package-lock.json
 
       - name: Build Android APK
+        env:
+          EAS_BUILD_SKIP_LOCKFILE_CHECK: 1
         run: eas build --platform android --profile preview --non-interactive
