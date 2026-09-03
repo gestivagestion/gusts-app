@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "GUSTS",
-    "slug": "gusts-kitesurf",
+    "slug": "gusts",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon-1024.png",
