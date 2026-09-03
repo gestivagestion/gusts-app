@@ -25,5 +25,8 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
+      - name: Remove lock file
+        run: rm -f package-lock.json
+
       - name: Build Android APK
         run: eas build --platform android --profile preview --non-interactive
