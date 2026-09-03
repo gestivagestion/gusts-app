@@ -1,0 +1,29 @@
+{
+  "license": "0BSD",
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "expo": "~54.0.37",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-paper": "4.9.2",
+    "@expo/vector-icons": "^15.0.3",
+    "react-native-maps": "1.20.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo-location": "~19.0.8",
+    "expo-sensors": "~15.0.8",
+    "react-native-url-polyfill": "4.0.0",
+    "@supabase/supabase-js": "*",
+    "@opentelemetry/api": "^1.0.0",
+    "expo-image-picker": "~17.0.11",
+    "expo-image-manipulator": "~14.0.8",
+    "base64-arraybuffer": "*"
+  },
+  "private": true
+}
