@@ -7,6 +7,7 @@
     "icon": "./assets/icon-1024.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "owner": "gestivas-team",
     "splash": {
       "image": "./assets/splash-1080.png",
       "resizeMode": "contain",
@@ -31,6 +32,11 @@
     },
     "web": {
       "favicon": "./assets/icon-1024.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ddebe179-5ef2-42a0-ae5f-f86865ad1806"
+      }
     }
   }
 }
