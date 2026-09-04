@@ -37,12 +37,32 @@ export default function App() {
   const [verificando, setVerificando] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSesion(data.session);
-      setVerificando(false);
+    let vivo = true;
+
+    supabase.auth.getSession()
+      .then(({ data }) => {
+        if (vivo) setSesion(data?.session ?? null);
+      })
+      .catch((e) => {
+        console.log('Error al recuperar la sesión:', e);
+        if (vivo) setSesion(null);
+      })
+      .finally(() => {
+        if (vivo) setVerificando(false);
+      });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_evento, s) => {
+      if (vivo) setSesion(s);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_evento, s) => setSesion(s));
-    return () => sub.subscription.unsubscribe();
+
+    return () => {
+      vivo = false;
+      try {
+        sub?.subscription?.unsubscribe();
+      } catch (e) {
+        console.log('No se pudo desuscribir del auth:', e);
+      }
+    };
   }, []);
 
   // ---------- alertas de viento de los spots favoritos ----------
@@ -68,14 +88,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    cargarAlertas();
-    getPeso().then(setPeso);
+    cargarAlertas().catch((e) => console.log('Fallo cargarAlertas:', e));
+    getPeso()
+      .then(setPeso)
+      .catch((e) => console.log('No se pudo leer el peso:', e));
   }, []);
 
   // cuando volvés al mapa puede haber favoritos nuevos
   useEffect(() => {
     if (tab === 0) return;
-    cargarAlertas();
+    cargarAlertas().catch((e) => console.log('Fallo cargarAlertas:', e));
   }, [tab]);
 
   const navegables = favs.filter((s) => {
@@ -267,16 +289,6 @@ const styles = StyleSheet.create({
   alertBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 5 },
   alertBadgeText: { color: '#fff', fontSize: 9.5, fontWeight: 'bold' },
   alertNota: { fontSize: 10.5, color: '#8a9aa8', lineHeight: 15, marginTop: 6, fontStyle: 'italic' },
-
-
-
-  // SESSION
-
-  // FEED
-
-
-
-  // PROFILE
 
   // TABS
   tabBar: { flexDirection: 'row', borderTopWidth: 1, paddingVertical: 8, paddingBottom: 20 },
