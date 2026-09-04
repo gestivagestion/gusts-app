@@ -30,7 +30,7 @@ const colors = {
 };
 
 export default function App() {
-  const [tab, setTab] = useState(5);
+  const [tab, setTab] = useState(0);
 
   // ---------- sesión ----------
   const [sesion, setSesion] = useState(null);
