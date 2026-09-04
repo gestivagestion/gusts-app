@@ -30,6 +30,20 @@ const COLORS = {
 
 const NIVELES = ['Aprendiendo', 'Principiante', 'Intermedio', 'Avanzado', 'Instructor'];
 
+// ------------------------------------------------------------
+// Descargo de responsabilidad para instructores.
+// Si se cambia el texto hay que subir la versión: los que ya lo
+// aceptaron van a tener que aceptarlo de nuevo.
+// ------------------------------------------------------------
+const DESCARGO_VERSION = '2026-09';
+const DESCARGO_PUNTOS = [
+  'GUSTS es solo un lugar donde alumnos e instructores se encuentran. No organizamos, supervisamos ni participamos de las clases.',
+  'Sos el único responsable de tu habilitación, tu seguro, tu equipo y la seguridad de tus alumnos durante la clase.',
+  'El precio y el pago se acuerdan directamente con el alumno. GUSTS no cobra, no retiene ni garantiza ningún pago.',
+  'GUSTS no responde por accidentes, lesiones, daños al equipo, ni por incumplimientos de ninguna de las partes.',
+  'Declarás que la información que publicás sobre tu certificación y experiencia es verdadera. Si no lo es, damos de baja la verificación.',
+];
+
 export default function ProfileScreen() {
   const [sesiones, setSesiones] = useState([]);
   const [yo, setYo] = useState(null);
@@ -49,6 +63,9 @@ export default function ProfileScreen() {
   const [soyVerificado, setSoyVerificado] = useState(false);
   const [pruebaUsada, setPruebaUsada] = useState(false);
   const [venceVerificacion, setVenceVerificacion] = useState(null);
+  const [descargoOk, setDescargoOk] = useState(false);
+  const [descargoFecha, setDescargoFecha] = useState(null);
+  const [tildado, setTildado] = useState(false);
   const [pedidos, setPedidos] = useState([]);
   const [solicitudes, setSolicitudes] = useState([]);
   const [denuncias, setDenuncias] = useState([]);
@@ -116,6 +133,12 @@ export default function ProfileScreen() {
       );
       setPruebaUsada(!!p?.prueba_usada);
       setVenceVerificacion(p?.verificado_hasta || null);
+
+      // descargo: vale solo si aceptó la versión vigente
+      const aceptado = !!p?.descargo_aceptado && p?.descargo_version === DESCARGO_VERSION;
+      setDescargoOk(aceptado);
+      setDescargoFecha(aceptado ? p?.descargo_fecha : null);
+      setTildado(aceptado);
 
       const ids = await getBloqueados();
       if (ids.length) {
@@ -246,7 +269,40 @@ export default function ProfileScreen() {
     }
   };
 
+  // deja registrado que aceptó el descargo, con fecha y versión
+  const registrarDescargo = async () => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        descargo_aceptado: true,
+        descargo_fecha: new Date().toISOString(),
+        descargo_version: DESCARGO_VERSION,
+      })
+      .eq('id', yo);
+    if (error) {
+      Alert.alert('No se pudo registrar la aceptación', error.message);
+      return false;
+    }
+    setDescargoOk(true);
+    return true;
+  };
+
   const pedir = async (tipo, monto, dias, concepto, esPrueba) => {
+    // para instructor primero guardamos la aceptación del descargo
+    if (tipo === 'instructor') {
+      if (!tildado) {
+        Alert.alert(
+          'Falta aceptar el descargo',
+          'Tenés que leer y aceptar las condiciones antes de verificarte como instructor.'
+        );
+        return;
+      }
+      if (!descargoOk) {
+        const ok = await registrarDescargo();
+        if (!ok) return;
+      }
+    }
+
     const { error } = await supabase
       .from('solicitudes')
       .insert({ usuario: yo, tipo, monto: esPrueba ? 0 : monto, dias: dias || null, es_prueba: !!esPrueba });
@@ -279,6 +335,17 @@ export default function ProfileScreen() {
             ).catch(() => {}),
         },
       ]
+    );
+  };
+
+  const verDescargo = () => {
+    Alert.alert(
+      'Condiciones para instructores',
+      DESCARGO_PUNTOS.map((p, i) => `${i + 1}. ${p}`).join('\n\n') +
+        (descargoFecha
+          ? `\n\nAceptado el ${new Date(descargoFecha).toLocaleDateString('es-AR')} (versión ${DESCARGO_VERSION}).`
+          : ''),
+      [{ text: 'Cerrar' }]
     );
   };
 
@@ -782,6 +849,15 @@ export default function ProfileScreen() {
               </View>
               <MaterialCommunityIcons name="chevron-right" size={20} color="rgba(255,255,255,0.7)" />
             </TouchableOpacity>
+            <TouchableOpacity style={styles.verCondiciones} onPress={verDescargo}>
+              <MaterialCommunityIcons name="file-document-outline" size={15} color={COLORS.subtitle} />
+              <Text style={styles.verCondicionesText}>
+                Ver las condiciones que aceptaste
+                {descargoFecha
+                  ? ` · ${new Date(descargoFecha).toLocaleDateString('es-AR')}`
+                  : ''}
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.btnBaja} onPress={darDeBaja}>
               <Text style={styles.btnBajaText}>Dar de baja la verificación</Text>
             </TouchableOpacity>
@@ -953,7 +1029,7 @@ export default function ProfileScreen() {
       {/* Verificación de instructor */}
       <Modal animationType="slide" transparent visible={modalInstructor} onRequestClose={() => setModalInstructor(false)}>
         <View style={styles.overlay}>
-          <View style={styles.modal}>
+          <View style={[styles.modal, { maxHeight: '90%' }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Instructor verificado</Text>
               <TouchableOpacity onPress={() => setModalInstructor(false)}>
@@ -961,51 +1037,98 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
 
-            {INSTRUCTOR.beneficios.map((b, i) => (
-              <View key={i} style={styles.beneficio}>
-                <MaterialCommunityIcons name="check-circle" size={17} color="#34C759" />
-                <Text style={styles.beneficioText}>{b}</Text>
-              </View>
-            ))}
+            <ScrollView contentContainerStyle={{ paddingBottom: 16 }} keyboardShouldPersistTaps="handled">
+              {INSTRUCTOR.beneficios.map((b, i) => (
+                <View key={i} style={styles.beneficio}>
+                  <MaterialCommunityIcons name="check-circle" size={17} color="#34C759" />
+                  <Text style={styles.beneficioText}>{b}</Text>
+                </View>
+              ))}
 
-            {INSTRUCTOR.prueba && !pruebaUsada && (
+              {/* Descargo de responsabilidad */}
+              <View style={styles.descargoCaja}>
+                <View style={styles.descargoTop}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={17} color="#8a5a00" />
+                  <Text style={styles.descargoTitulo}>Antes de seguir, leé esto</Text>
+                </View>
+                {DESCARGO_PUNTOS.map((p, i) => (
+                  <View key={i} style={styles.descargoFila}>
+                    <Text style={styles.descargoBullet}>·</Text>
+                    <Text style={styles.descargoTexto}>{p}</Text>
+                  </View>
+                ))}
+              </View>
+
               <TouchableOpacity
-                style={styles.opcionPrueba}
-                onPress={() =>
-                  pedir('instructor', 0, INSTRUCTOR.diasPrueba, 'verificarme como instructor', true)
-                }
+                style={[styles.tildaCaja, tildado && styles.tildaCajaOn]}
+                onPress={() => setTildado(!tildado)}
+                activeOpacity={0.8}
               >
-                <MaterialCommunityIcons name="gift-outline" size={24} color="#0a7d33" />
+                <MaterialCommunityIcons
+                  name={tildado ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                  size={22}
+                  color={tildado ? '#0a7d33' : '#8a9aa8'}
+                />
+                <Text style={[styles.tildaTexto, tildado && { color: '#0a5c26' }]}>
+                  Leí y acepto estas condiciones. Entiendo que GUSTS solo conecta y no
+                  responde por lo que pase en la clase ni por el pago.
+                </Text>
+              </TouchableOpacity>
+
+              {descargoOk && !!descargoFecha && (
+                <Text style={styles.descargoFecha}>
+                  Ya aceptaste estas condiciones el{' '}
+                  {new Date(descargoFecha).toLocaleDateString('es-AR')}.
+                </Text>
+              )}
+
+              {INSTRUCTOR.prueba && !pruebaUsada && (
+                <TouchableOpacity
+                  style={[styles.opcionPrueba, !tildado && styles.bloqueada]}
+                  disabled={!tildado}
+                  onPress={() =>
+                    pedir('instructor', 0, INSTRUCTOR.diasPrueba, 'verificarme como instructor', true)
+                  }
+                >
+                  <MaterialCommunityIcons name="gift-outline" size={24} color="#0a7d33" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.opcionPruebaTitulo}>
+                      {INSTRUCTOR.diasPrueba / 30} meses gratis
+                    </Text>
+                    <Text style={styles.opcionPagoDesc}>
+                      Probalo sin pagar nada. Después seguís si te sirve.
+                    </Text>
+                  </View>
+                  <Text style={styles.gratis}>GRATIS</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[styles.opcionPago, { marginTop: 10 }, !tildado && styles.bloqueada]}
+                disabled={!tildado}
+                onPress={() => pedir('instructor', INSTRUCTOR.monto, INSTRUCTOR.dias, 'verificarme como instructor')}
+              >
+                <MaterialCommunityIcons name="check-decagram" size={22} color="#0a7d33" />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.opcionPruebaTitulo}>
-                    {INSTRUCTOR.diasPrueba / 30} meses gratis
-                  </Text>
+                  <Text style={styles.opcionPagoTitulo}>{INSTRUCTOR.dias} días</Text>
                   <Text style={styles.opcionPagoDesc}>
-                    Probalo sin pagar nada. Después seguís si te sirve.
+                    {pruebaUsada ? 'Renovación mensual' : 'Si preferís arrancar pagando'}
                   </Text>
                 </View>
-                <Text style={styles.gratis}>GRATIS</Text>
+                <Text style={styles.opcionPagoMonto}>USD {INSTRUCTOR.monto}</Text>
               </TouchableOpacity>
-            )}
 
-            <TouchableOpacity
-              style={[styles.opcionPago, { marginTop: 10 }]}
-              onPress={() => pedir('instructor', INSTRUCTOR.monto, INSTRUCTOR.dias, 'verificarme como instructor')}
-            >
-              <MaterialCommunityIcons name="check-decagram" size={22} color="#0a7d33" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.opcionPagoTitulo}>{INSTRUCTOR.dias} días</Text>
-                <Text style={styles.opcionPagoDesc}>
-                  {pruebaUsada ? 'Renovación mensual' : 'Si preferís arrancar pagando'}
+              {!tildado && (
+                <Text style={styles.avisoTilde}>
+                  Marcá la casilla de arriba para poder continuar.
                 </Text>
-              </View>
-              <Text style={styles.opcionPagoMonto}>USD {INSTRUCTOR.monto}</Text>
-            </TouchableOpacity>
+              )}
 
-            <Text style={styles.pagoNota}>
-              Antes de activarte podemos pedirte tu certificación o alguna referencia. La insignia
-              es para que los alumnos sepan a quién le están escribiendo.
-            </Text>
+              <Text style={styles.pagoNota}>
+                Antes de activarte podemos pedirte tu certificación o alguna referencia. La insignia
+                es para que los alumnos sepan a quién le están escribiendo.
+              </Text>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1198,6 +1321,37 @@ const styles = StyleSheet.create({
   },
   btnBajaText: { fontSize: 12.5, fontWeight: '600', color: COLORS.subtitle },
 
+  verCondiciones: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 10, marginTop: 6,
+  },
+  verCondicionesText: { fontSize: 11.5, color: COLORS.subtitle, textDecorationLine: 'underline' },
+
+  descargoCaja: {
+    backgroundColor: '#fff8e6', borderRadius: 11, padding: 13, marginTop: 6,
+    borderWidth: 1, borderColor: '#ffe0a3',
+  },
+  descargoTop: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 9 },
+  descargoTitulo: { fontSize: 13.5, fontWeight: 'bold', color: '#8a5a00' },
+  descargoFila: { flexDirection: 'row', gap: 7, marginBottom: 7 },
+  descargoBullet: { fontSize: 13, color: '#8a5a00', lineHeight: 17 },
+  descargoTexto: { flex: 1, fontSize: 11.5, color: '#6b4a10', lineHeight: 17 },
+  descargoFecha: {
+    fontSize: 10.5, color: '#0a7d33', fontStyle: 'italic', marginTop: 8, textAlign: 'center',
+  },
+
+  tildaCaja: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: '#f5f7fa',
+    borderRadius: 11, padding: 13, marginTop: 11, marginBottom: 4,
+    borderWidth: 1.5, borderColor: '#e3ebf2',
+  },
+  tildaCajaOn: { backgroundColor: '#e9f7ee', borderColor: '#8fd3a8' },
+  tildaTexto: { flex: 1, fontSize: 12, color: '#444', lineHeight: 17 },
+  bloqueada: { opacity: 0.4 },
+  avisoTilde: {
+    fontSize: 11, color: '#c0392b', textAlign: 'center', marginTop: 9, fontWeight: '600',
+  },
+
   pedidoFila: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff',
     borderRadius: 10, padding: 12, marginBottom: 8,
@@ -1326,7 +1480,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, fontWeight: '600', color: '#1a1a1a' },
   input: {
     backgroundColor: '#f5f5f5', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
-    borderWidth: 1, borderColor: '#dde6ee', fontSize: 14,
+    borderWidth: 1, borderColor: '#dde6ee', fontSize: 14, color: '#000',
   },
   opciones: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   opcion: {
