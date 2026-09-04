@@ -24,11 +24,16 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon-1024.png",
-        "backgroundColor": "#1F2937"
+        "backgroundColor": "#FFFFFF"
       },
       "package": "com.gustskite.app",
       "versionCode": 1,
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyBSTKTBS5J5fSSqfC42VT8SeKfwYAc_h0o"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/icon-1024.png"
