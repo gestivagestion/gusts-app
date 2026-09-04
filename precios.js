@@ -3,41 +3,75 @@
 // Todo junto acá para cambiarlo en un solo lugar.
 // ============================================================
 
-// 👇 PONÉ TUS DATOS REALES DE COBRO
+// Datos de transferencia. Siguen vigentes mientras las compras
+// dentro de la app no estén activas.
 export const COBRO = {
   alias: 'gestiva.gusts',                 // alias de Mercado Pago o CBU
   titular: 'Leandro Nuñez',               // a nombre de quién figura
   mail: 'gestivagestion@gmail.com',       // adónde mandan el comprobante
 };
 
-// Apoyo voluntario (en dólares, se cobra el equivalente en pesos)
+// ------------------------------------------------------------
+// IDs de producto para Google Play y App Store.
+// Tienen que coincidir EXACTAMENTE con los que se creen en cada
+// consola. Si cambia uno acá, hay que cambiarlo allá también.
+// ------------------------------------------------------------
+export const PRODUCTOS = {
+  // consumibles (pago único)
+  destacar30: 'gusts_destacar_30',
+  destacar60: 'gusts_destacar_60',
+  destacar90: 'gusts_destacar_90',
+  apoyo2: 'gusts_apoyo_2',
+  apoyo5: 'gusts_apoyo_5',
+  apoyo10: 'gusts_apoyo_10',
+  // suscripciones
+  instructor: 'gusts_instructor_mensual',
+  alojamiento: 'gusts_alojamiento_mensual',
+};
+
+// Apoyo voluntario
 export const APOYOS = [
-  { monto: 2, label: 'Un café', desc: 'Ayuda a pagar el servidor del mes' },
-  { monto: 5, label: 'Una mano', desc: 'Cubre el pronóstico de varios días' },
-  { monto: 10, label: 'Un empujón', desc: 'Banca el desarrollo de lo que viene' },
+  { monto: 2, label: 'Un café', desc: 'Ayuda a pagar el servidor del mes', sku: PRODUCTOS.apoyo2 },
+  { monto: 5, label: 'Una mano', desc: 'Cubre el pronóstico de varios días', sku: PRODUCTOS.apoyo5 },
+  { monto: 10, label: 'Un empujón', desc: 'Banca el desarrollo de lo que viene', sku: PRODUCTOS.apoyo10 },
 ];
 
 // Destacar una publicación
 export const DESTACADOS = [
-  { dias: 7, monto: 3, label: '1 semana' },
-  { dias: 15, monto: 5, label: '15 días' },
-  { dias: 30, monto: 8, label: '1 mes' },
+  { dias: 30, monto: 2, label: '30 días', sku: PRODUCTOS.destacar30 },
+  { dias: 60, monto: 3.5, label: '60 días', sku: PRODUCTOS.destacar60 },
+  { dias: 90, monto: 5, label: '90 días', sku: PRODUCTOS.destacar90 },
 ];
 
 // Verificación de instructor o escuela
 export const INSTRUCTOR = {
-  monto: 6,
+  monto: 5,
   dias: 30,
+  sku: PRODUCTOS.instructor,
   // Los primeros dos meses son gratis: sin usuarios todavía,
   // cobrar de entrada no tiene sentido para nadie.
   prueba: true,
   diasPrueba: 60,
   beneficios: [
     'Insignia de verificado en tu perfil y tus avisos',
+    'Podés publicar en la sección de Clases',
     'Aparecés primero en la sección de Clases',
     'Podés publicar sin límite de avisos activos',
     'Tus alumnos ven tus calificaciones acumuladas',
     'Panel con agenda de turnos, alcance de tus avisos e ingresos',
+  ],
+};
+
+// Alquiler de alojamiento (todavía no está activo)
+export const ALOJAMIENTO = {
+  monto: 3,
+  dias: 30,
+  sku: PRODUCTOS.alojamiento,
+  activo: false,
+  beneficios: [
+    'Insignia de anfitrión verificado',
+    'Aparecés primero en la sección de Alojamiento',
+    'Podés publicar sin límite de propiedades',
   ],
 };
 
