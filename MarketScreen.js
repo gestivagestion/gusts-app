@@ -105,6 +105,7 @@ export default function MarketScreen() {
   const [tipo, setTipo] = useState('equipo');
   const [items, setItems] = useState([]);
   const [yo, setYo] = useState(null);
+  const [soyInstructor, setSoyInstructor] = useState(false);
   const [nombres, setNombres] = useState({});
   const [guardando, setGuardando] = useState(false);
   const [reputacion, setReputacion] = useState({});
@@ -133,6 +134,17 @@ export default function MarketScreen() {
     const { data: auth } = await supabase.auth.getUser();
     const uid = auth?.user?.id;
     setYo(uid);
+
+    // ¿este usuario está habilitado para publicar clases?
+    if (uid) {
+      const { data: miPerfil } = await supabase
+        .from('profiles')
+        .select('es_instructor')
+        .eq('id', uid)
+        .maybeSingle();
+      setSoyInstructor(!!miPerfil?.es_instructor);
+    }
+
     const bloq = await getBloqueados();
     setBloqueados(bloq);
 
@@ -241,7 +253,42 @@ export default function MarketScreen() {
 
   const quitarFoto = (url) => setFotos((f) => f.filter((x) => x !== url));
 
+  // ------------------------------------------------------------
+  // Control de instructor
+  // ------------------------------------------------------------
+  const avisoInstructor = () => {
+    Alert.alert(
+      'Solo para instructores verificados',
+      'Para publicar clases necesitás estar verificado como instructor.\n\n' +
+        'Escribinos a hola@gustskite.com contándonos dónde das clases, tu certificación y ' +
+        'años de experiencia. Revisamos el pedido y te habilitamos la categoría.',
+      [
+        { text: 'Ahora no', style: 'cancel' },
+        {
+          text: 'Escribir',
+          onPress: () =>
+            Linking.openURL(
+              'mailto:hola@gustskite.com?subject=' +
+                encodeURIComponent('Quiero publicar clases en GUSTS')
+            ).catch(() => {}),
+        },
+      ]
+    );
+  };
+
+  const abrirFormulario = () => {
+    if (tipo === 'instructor' && !soyInstructor) {
+      avisoInstructor();
+      return;
+    }
+    setModal(true);
+  };
+
   const publicar = async () => {
+    if (tipo === 'instructor' && !soyInstructor) {
+      avisoInstructor();
+      return;
+    }
     const faltan = campos.filter((c) => c.req && !form[c.k].trim());
     if (faltan.length) {
       Alert.alert('Faltan datos', `Completá: ${faltan.map((f) => f.label).join(', ')}`);
@@ -272,6 +319,13 @@ export default function MarketScreen() {
     setGuardando(false);
 
     if (error) {
+      // el CHECK de la base también frena esto; mostramos algo entendible
+      const msg = String(error.message || '');
+      if (msg.includes('solo_instructores') || msg.includes('puede_publicar_clases')) {
+        setModal(false);
+        avisoInstructor();
+        return;
+      }
       Alert.alert('No se pudo publicar', mensajeDeError(error));
       return;
     }
@@ -489,6 +543,27 @@ export default function MarketScreen() {
           </View>
         </View>
 
+        {tipo === 'instructor' && !soyInstructor && (
+          <View style={styles.avisoInstructor}>
+            <MaterialCommunityIcons name="school-outline" size={16} color="#4a3a8a" />
+            <Text style={styles.avisoInstructorText}>
+              Esta categoría es solo para instructores verificados: revisamos a mano quién
+              enseña para que nadie dé clases sin respaldo. ¿Sos instructor? Escribinos a
+              hola@gustskite.com y te habilitamos.
+            </Text>
+          </View>
+        )}
+
+        {tipo === 'instructor' && soyInstructor && (
+          <View style={styles.avisoInstructorOk}>
+            <MaterialCommunityIcons name="check-decagram" size={16} color="#0a7d33" />
+            <Text style={styles.avisoInstructorOkText}>
+              Estás habilitado para publicar clases. Recordá que GUSTS solo conecta: el
+              acuerdo y el pago son entre vos y el alumno.
+            </Text>
+          </View>
+        )}
+
         {tipo === 'perdido' && (
           <View style={styles.avisoPerdidos}>
             <MaterialCommunityIcons name="information-outline" size={16} color="#8a2a52" />
@@ -503,7 +578,11 @@ export default function MarketScreen() {
           <View style={styles.vacio}>
             <MaterialCommunityIcons name={cat.icon} size={54} color="#c9d6e2" />
             <Text style={styles.vacioTitulo}>Todavía no hay publicaciones</Text>
-            <Text style={styles.vacioTexto}>Tocá el botón de abajo para publicar la primera.</Text>
+            <Text style={styles.vacioTexto}>
+              {tipo === 'instructor' && !soyInstructor
+                ? 'Cuando haya instructores verificados los vas a ver acá.'
+                : 'Tocá el botón de abajo para publicar la primera.'}
+            </Text>
           </View>
         )}
 
@@ -596,6 +675,13 @@ export default function MarketScreen() {
 
             {!!item.detalle && <Text style={styles.detalle}>{item.detalle}</Text>}
 
+            {item.tipo === 'instructor' && (
+              <Text style={styles.notaClases}>
+                Las clases se acuerdan y se pagan directamente con el instructor. GUSTS no
+                participa del pago ni responde por lo que ocurra durante la clase.
+              </Text>
+            )}
+
             <View style={styles.autorFila}>
               <Text style={styles.autorLinea}>
                 {item.autor === yo ? 'Publicaste vos' : `Publica ${nombres[item.autor] || 'un rider'}`}
@@ -681,8 +767,19 @@ export default function MarketScreen() {
       </ScrollView>
 
       {/* Botón publicar */}
-      <TouchableOpacity style={[styles.fab, { backgroundColor: cat.color }]} onPress={() => setModal(true)}>
-        <MaterialCommunityIcons name="plus" size={22} color="#fff" />
+      <TouchableOpacity
+        style={[
+          styles.fab,
+          { backgroundColor: cat.color },
+          tipo === 'instructor' && !soyInstructor && { opacity: 0.55 },
+        ]}
+        onPress={abrirFormulario}
+      >
+        <MaterialCommunityIcons
+          name={tipo === 'instructor' && !soyInstructor ? 'lock-outline' : 'plus'}
+          size={22}
+          color="#fff"
+        />
         <Text style={styles.fabText}>Publicar</Text>
       </TouchableOpacity>
 
@@ -816,6 +913,16 @@ export default function MarketScreen() {
             </View>
 
             <ScrollView contentContainerStyle={{ gap: 14, paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
+              {tipo === 'instructor' && (
+                <View style={styles.avisoInstructorOk}>
+                  <MaterialCommunityIcons name="shield-alert-outline" size={16} color="#0a7d33" />
+                  <Text style={styles.avisoInstructorOkText}>
+                    Al publicar confirmás que estás en condiciones de dar clases. GUSTS solo
+                    conecta: no responde por accidentes, lesiones ni por el pago del alumno.
+                  </Text>
+                </View>
+              )}
+
               {campos.map((c) => {
                 if (c.tipo === 'opciones') {
                   return (
@@ -1005,6 +1112,20 @@ const styles = StyleSheet.create({
   },
   avisoPerdidosText: { flex: 1, fontSize: 11, color: '#8a2a52', lineHeight: 16 },
 
+  avisoInstructor: {
+    flexDirection: 'row', gap: 8, backgroundColor: '#f0edfa', borderRadius: 10, padding: 10,
+    marginBottom: 14, borderWidth: 1, borderColor: '#d4cbf0',
+  },
+  avisoInstructorText: { flex: 1, fontSize: 11, color: '#4a3a8a', lineHeight: 16 },
+  avisoInstructorOk: {
+    flexDirection: 'row', gap: 8, backgroundColor: '#e9f7ee', borderRadius: 10, padding: 10,
+    marginBottom: 14, borderWidth: 1, borderColor: '#b8e2c6',
+  },
+  avisoInstructorOkText: { flex: 1, fontSize: 11, color: '#0a5c26', lineHeight: 16 },
+  notaClases: {
+    fontSize: 10.5, color: '#8a9aa8', lineHeight: 15, fontStyle: 'italic', marginTop: 9,
+  },
+
   perdidoBadge: {
     flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
     paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6, marginTop: 7,
@@ -1094,7 +1215,7 @@ const styles = StyleSheet.create({
 
   vacio: { alignItems: 'center', paddingVertical: 50 },
   vacioTitulo: { fontSize: 15, fontWeight: 'bold', color: '#1a1a1a', marginTop: 12 },
-  vacioTexto: { fontSize: 12, color: COLORS.subtitle, marginTop: 4 },
+  vacioTexto: { fontSize: 12, color: COLORS.subtitle, marginTop: 4, textAlign: 'center', paddingHorizontal: 30 },
 
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, borderLeftWidth: 4, elevation: 2 },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
@@ -1136,7 +1257,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, fontWeight: '600', color: '#1a1a1a' },
   input: {
     backgroundColor: '#f5f5f5', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
-    borderWidth: 1, borderColor: '#dde6ee', fontSize: 14,
+    borderWidth: 1, borderColor: '#dde6ee', fontSize: 14, color: '#000',
   },
   ayuda: { fontSize: 10.5, color: '#8a9aa8', fontStyle: 'italic' },
   opciones: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
