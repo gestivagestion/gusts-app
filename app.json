@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon-1024.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "owner": "gestivas-team",
     "splash": {
       "image": "./assets/splash-1080.png",
