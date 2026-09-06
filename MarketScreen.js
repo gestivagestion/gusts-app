@@ -37,6 +37,8 @@ const TIPOS = [
     titulo: 'Instructores', sub: 'Clases y acompañamiento en el agua' },
   { id: 'perdido', label: 'Perdidos', icon: 'archive-search-outline', color: '#E91E63',
     titulo: 'Perdidos y encontrados', sub: 'Equipo que se voló, se olvidó o apareció' },
+  { id: 'reparacion', label: 'Reparación', icon: 'wrench-outline', color: '#0EA5A5',
+    titulo: 'Reparación y service', sub: 'Arreglo de kites, tablas y arneses' },
 ];
 
 // ------------------------------------------------------------
@@ -93,6 +95,17 @@ const CAMPOS = {
       opciones: ['Desde cero', 'Principiante', 'Intermedio', 'Todos los niveles'] },
     { k: 'detalle', label: 'Detalle', tipo: 'largo',
       ph: 'Años de experiencia, si incluís el equipo, seguro, idiomas...' },
+  ],
+    reparacion: [
+    { k: 'titulo', label: 'Qué reparás', ph: 'Reparación de kites, tablas y arneses', req: true },
+    { k: 'spot', label: 'Zona donde atendés', tipo: 'spot', req: true },
+    { k: 'precio', label: 'Precio', ph: 'Desde $15.000 según el trabajo', req: true },
+    { k: 'estado', label: 'Especialidad', tipo: 'opciones',
+      opciones: ['Costura de kites', 'Válvulas y vejigas', 'Tablas', 'Arneses', 'Todo tipo'] },
+    { k: 'capacidad', label: 'Tiempo de entrega', tipo: 'opciones',
+      opciones: ['24-48 hs', '3-5 días', 'Una semana o más'] },
+    { k: 'detalle', label: 'Detalle', tipo: 'largo',
+      ph: 'Años de experiencia, si retirás a domicilio, garantía del trabajo...' },
   ],
 };
 
