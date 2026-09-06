@@ -127,6 +127,16 @@ export default function SessionScreen() {
       return;
     }
 
+    if (Platform.OS === 'android') {
+      const bg = await Location.requestBackgroundPermissionsAsync();
+      if (bg.status !== 'granted') {
+        Alert.alert(
+          'Falta un permiso',
+          'Para que la sesión siga midiendo con la pantalla bloqueada, andá a Ajustes del teléfono → Apps → GUSTS → Permisos → Ubicación, y elegí "Permitir todo el tiempo".'
+        );
+      }
+    }
+
     // reiniciar contadores
     acumKm.current = 0;
     maxKt.current = 0;
