@@ -23,7 +23,9 @@
     "@opentelemetry/api": "^1.0.0",
     "expo-image-picker": "~17.0.11",
     "expo-image-manipulator": "~14.0.8",
-    "base64-arraybuffer": "*"
+    "base64-arraybuffer": "*",
+    "expo-task-manager": "~14.0.7",
+    "expo-audio": "~1.0.13"
   },
   "private": true
 }
