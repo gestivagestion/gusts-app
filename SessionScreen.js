@@ -6,6 +6,8 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
+import * as TaskManager from 'expo-task-manager';
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
 import { ICON_BASE64 } from './logo';
 import { getVientoActual, kiteParaViento } from './weather';
@@ -27,6 +29,23 @@ const AIRTIME_MIN = 0.6;     // segundos: menos que esto es ruido, no un salto
 const AIRTIME_MAX = 8;       // segundos: más que esto es un error de lectura
 
 const alturaDeAirtime = (seg) => (9.81 * seg * seg) / 8;
+
+// ============================================================
+// SEGUIR MIDIENDO CON LA PANTALLA BLOQUEADA
+// Android: mantenemos vivo el proceso con un foreground service de
+// ubicación (aviso permanente). iOS: reproducimos un audio silencioso
+// en loop, que es la técnica estándar que usan las apps de running/GPS
+// para que el sistema no suspenda la app.
+// ============================================================
+const LOCATION_TASK_NAME = 'gusts-ubicacion-en-segundo-plano';
+
+if (!TaskManager.isTaskDefined(LOCATION_TASK_NAME)) {
+  TaskManager.defineTask(LOCATION_TASK_NAME, ({ error }) => {
+    if (error) console.log('Error en tarea de ubicación en segundo plano:', error);
+  });
+}
+
+const silencio = require('./assets/silence.wav');
 
 const COLORS = {
   primary: '#003D7A',
@@ -52,6 +71,8 @@ export default function SessionScreen() {
   const [guardando, setGuardando] = useState(false);
   const [peso, setPeso] = useState(null);
   const [vista, setVista] = useState('registrar');
+
+  const reproductor = useAudioPlayer(silencio);
 
   const suscripcion = useRef(null);
   const cronometro = useRef(null);
@@ -85,6 +106,13 @@ export default function SessionScreen() {
     if (acelerometro.current) {
       acelerometro.current.remove();
       acelerometro.current = null;
+    }
+    if (Platform.OS === 'android') {
+      Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME)
+        .then((activo) => { if (activo) Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME); })
+        .catch(() => {});
+    } else if (Platform.OS === 'ios') {
+      try { reproductor.pause(); } catch (e) {}
     }
   };
 
@@ -123,6 +151,33 @@ export default function SessionScreen() {
     cronometro.current = setInterval(() => {
       setSegundos(Math.floor((Date.now() - inicio.current.getTime()) / 1000));
     }, 1000);
+
+    // Mantener la sesión midiendo aunque se bloquee la pantalla
+    if (Platform.OS === 'android') {
+      try {
+        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 3000,
+          distanceInterval: 10,
+          pausesUpdatesAutomatically: false,
+          foregroundService: {
+            notificationTitle: 'GUSTS está registrando tu sesión',
+            notificationBody: 'Tocá para volver a la app',
+            notificationColor: '#003D7A',
+          },
+        });
+      } catch (e) {
+        console.log('No se pudo iniciar el servicio en segundo plano:', e);
+      }
+    } else if (Platform.OS === 'ios') {
+      try {
+        await setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: true });
+        reproductor.loop = true;
+        reproductor.play();
+      } catch (e) {
+        console.log('No se pudo activar el audio en segundo plano:', e);
+      }
+    }
 
     // Acelerómetro a 50 lecturas por segundo para no perder saltos cortos
     Accelerometer.setUpdateInterval(20);
@@ -298,8 +353,8 @@ export default function SessionScreen() {
             <MaterialCommunityIcons name="information-outline" size={16} color="#8a5a00" />
             <Text style={styles.tipText}>
               Llevá el teléfono ajustado al cuerpo (brazalete o cintura), no suelto en el bolsillo:
-              los saltos se miden con el acelerómetro y necesita estar firme. Dejá la pantalla
-              encendida, porque si se bloquea la medición se corta.
+              los saltos se miden con el acelerómetro y necesita estar firme. La sesión sigue
+              midiendo aunque bloquees la pantalla.
             </Text>
           </View>
 
@@ -381,7 +436,7 @@ export default function SessionScreen() {
           </TouchableOpacity>
 
           <Text style={styles.avisoVivo}>
-            No bloquees la pantalla ni cambies de app: el GPS deja de registrar.
+            Podés bloquear la pantalla: la sesión sigue midiendo en segundo plano.
           </Text>
         </>
       )}
