@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, fontWeight: '600', color: '#1a1a1a' },
   input: {
     backgroundColor: '#f7f9fb', borderRadius: 9, paddingHorizontal: 13, paddingVertical: 12,
-    borderWidth: 1, borderColor: '#dde6ee', fontSize: 15,
+    borderWidth: 1, borderColor: '#dde6ee', fontSize: 15, color: '#000',
   },
   passRow: { flexDirection: 'row', alignItems: 'stretch' },
   ojo: {
