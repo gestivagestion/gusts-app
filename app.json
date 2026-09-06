@@ -19,7 +19,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.gustskite.app",
-      "buildNumber": "1"
+      "buildNumber": "1",
+      "infoPlist": {
+        "UIBackgroundModes": ["audio", "location"],
+        "NSLocationWhenInUseUsageDescription": "GUSTS usa tu ubicación para medir distancia y velocidad durante la sesión.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "GUSTS necesita seguir midiendo tu sesión de kitesurf aunque bloquees la pantalla."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -33,11 +38,28 @@
         "googleMaps": {
           "apiKey": "AIzaSyAhIrNsb-TkxDaZHDS7O9734gkYc5JDvKQ"
         }
-      }
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/icon-1024.png"
     },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "GUSTS necesita seguir midiendo tu sesión aunque bloquees la pantalla.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "ddebe179-5ef2-42a0-ae5f-f86865ad1806"
