@@ -176,8 +176,9 @@ export default function SessionScreen() {
             notificationColor: '#003D7A',
           },
         });
+        Alert.alert('Debug', 'Servicio iniciado OK');
       } catch (e) {
-        console.log('No se pudo iniciar el servicio en segundo plano:', e);
+        Alert.alert('Debug: ERROR', String(e?.message || e));
       }
     } else if (Platform.OS === 'ios') {
       try {
