@@ -8,6 +8,7 @@ import * as Location from 'expo-location';
 import { Accelerometer } from 'expo-sensors';
 import * as TaskManager from 'expo-task-manager';
 import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import * as GustsMotion from 'gusts-motion';
 
 import { ICON_BASE64 } from './logo';
 import { getVientoActual, kiteParaViento } from './weather';
@@ -18,25 +19,13 @@ import {
 } from './sessions';
 import RankingScreen from './RankingScreen';
 
-// ============================================================
-// DETECCIÓN DE SALTOS
-// En el aire la aceleración cae cerca de cero (caída libre).
-// Medimos cuánto dura y la altura sale de h = g·t²/8.
-// Estos tres valores se pueden ajustar si detecta de más o de menos:
-const UMBRAL_AIRE = 0.45;    // por debajo de esto consideramos que está en el aire (en g)
-const UMBRAL_PISO = 0.85;    // por encima de esto consideramos que aterrizó
-const AIRTIME_MIN = 0.6;     // segundos: menos que esto es ruido, no un salto
-const AIRTIME_MAX = 8;       // segundos: más que esto es un error de lectura
+const UMBRAL_AIRE = 0.45;
+const UMBRAL_PISO = 0.85;
+const AIRTIME_MIN = 0.6;
+const AIRTIME_MAX = 8;
 
 const alturaDeAirtime = (seg) => (9.81 * seg * seg) / 8;
 
-// ============================================================
-// SEGUIR MIDIENDO CON LA PANTALLA BLOQUEADA
-// Android: mantenemos vivo el proceso con un foreground service de
-// ubicación (aviso permanente). iOS: reproducimos un audio silencioso
-// en loop, que es la técnica estándar que usan las apps de running/GPS
-// para que el sistema no suspenda la app.
-// ============================================================
 const LOCATION_TASK_NAME = 'gusts-ubicacion-en-segundo-plano';
 
 if (!TaskManager.isTaskDefined(LOCATION_TASK_NAME)) {
@@ -108,11 +97,55 @@ export default function SessionScreen() {
       acelerometro.current = null;
     }
     if (Platform.OS === 'android') {
+      try { GustsMotion.stop(); } catch (e) {}
       Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME)
         .then((activo) => { if (activo) Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME); })
         .catch(() => {});
     } else if (Platform.OS === 'ios') {
       try { reproductor.pause(); } catch (e) {}
+    }
+  };
+
+  // procesa una lectura del acelerómetro (x,y,z en g) — misma lógica
+  // para Android (gusts-motion) e iOS (expo-sensors)
+  const procesarLectura = (x, y, z) => {
+    const fuerza = Math.sqrt(x * x + y * y + z * z);
+    const ahora = Date.now();
+
+    if (!volando.current) {
+      if (fuerza < UMBRAL_AIRE) {
+        if (!candidato.current) candidato.current = ahora;
+        else if (ahora - candidato.current > 150) {
+          volando.current = true;
+          inicioSalto.current = candidato.current;
+          setEnAire(true);
+        }
+      } else {
+        candidato.current = null;
+      }
+      return;
+    }
+
+    if (fuerza > UMBRAL_PISO) {
+      const airtime = (ahora - inicioSalto.current) / 1000;
+      volando.current = false;
+      candidato.current = null;
+      setEnAire(false);
+
+      if (airtime >= AIRTIME_MIN && airtime <= AIRTIME_MAX) {
+        const altura = alturaDeAirtime(airtime);
+        const salto = {
+          airtime: Number(airtime.toFixed(2)),
+          altura: Number(altura.toFixed(1)),
+          hora: new Date().toISOString(),
+        };
+        listaSaltos.current = [...listaSaltos.current, salto];
+        setSaltos(listaSaltos.current);
+        if (altura > maxAltura.current) {
+          maxAltura.current = altura;
+          setAlturaMax(altura);
+        }
+      }
     }
   };
 
@@ -137,7 +170,6 @@ export default function SessionScreen() {
       }
     }
 
-    // reiniciar contadores
     acumKm.current = 0;
     maxKt.current = 0;
     listaSaltos.current = [];
@@ -162,7 +194,6 @@ export default function SessionScreen() {
       setSegundos(Math.floor((Date.now() - inicio.current.getTime()) / 1000));
     }, 1000);
 
-    // Mantener la sesión midiendo aunque se bloquee la pantalla
     if (Platform.OS === 'android') {
       try {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
@@ -176,9 +207,18 @@ export default function SessionScreen() {
             notificationColor: '#003D7A',
           },
         });
-        Alert.alert('Debug', 'Servicio iniciado OK');
       } catch (e) {
-        Alert.alert('Debug: ERROR', String(e?.message || e));
+        Alert.alert('Error al iniciar el modo segundo plano', String(e?.message || e));
+      }
+
+      // acelerómetro nativo: sigue leyendo con la pantalla bloqueada
+      try {
+        acelerometro.current = GustsMotion.addAccelerometerListener(({ x, y, z }) => {
+          procesarLectura(x, y, z);
+        });
+        GustsMotion.start();
+      } catch (e) {
+        Alert.alert('Error al iniciar el sensor', String(e?.message || e));
       }
     } else if (Platform.OS === 'ios') {
       try {
@@ -188,52 +228,12 @@ export default function SessionScreen() {
       } catch (e) {
         console.log('No se pudo activar el audio en segundo plano:', e);
       }
+
+      Accelerometer.setUpdateInterval(20);
+      acelerometro.current = Accelerometer.addListener(({ x, y, z }) => {
+        procesarLectura(x, y, z);
+      });
     }
-
-    // Acelerómetro a 50 lecturas por segundo para no perder saltos cortos
-    Accelerometer.setUpdateInterval(20);
-    acelerometro.current = Accelerometer.addListener(({ x, y, z }) => {
-      const fuerza = Math.sqrt(x * x + y * y + z * z); // en g
-      const ahora = Date.now();
-
-      if (!volando.current) {
-        if (fuerza < UMBRAL_AIRE) {
-          // esperamos 150 ms de caída libre sostenida antes de dar por bueno el despegue
-          if (!candidato.current) candidato.current = ahora;
-          else if (ahora - candidato.current > 150) {
-            volando.current = true;
-            inicioSalto.current = candidato.current;
-            setEnAire(true);
-          }
-        } else {
-          candidato.current = null;
-        }
-        return;
-      }
-
-      // está en el aire: esperamos el golpe del aterrizaje
-      if (fuerza > UMBRAL_PISO) {
-        const airtime = (ahora - inicioSalto.current) / 1000;
-        volando.current = false;
-        candidato.current = null;
-        setEnAire(false);
-
-        if (airtime >= AIRTIME_MIN && airtime <= AIRTIME_MAX) {
-          const altura = alturaDeAirtime(airtime);
-          const salto = {
-            airtime: Number(airtime.toFixed(2)),
-            altura: Number(altura.toFixed(1)),
-            hora: new Date().toISOString(),
-          };
-          listaSaltos.current = [...listaSaltos.current, salto];
-          setSaltos(listaSaltos.current);
-          if (altura > maxAltura.current) {
-            maxAltura.current = altura;
-            setAlturaMax(altura);
-          }
-        }
-      }
-    });
 
     suscripcion.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 2000, distanceInterval: 5 },
@@ -244,7 +244,6 @@ export default function SessionScreen() {
           primerPunto.current = punto;
           const cerca = spotMasCercano(punto);
           if (cerca) setSpotActual(cerca.spot);
-          // viento del lugar donde estás navegando
           getVientoActual([{ id: 'sesion', ...punto }])
             .then((d) => setViento(d.sesion || null))
             .catch(() => {});
@@ -252,7 +251,6 @@ export default function SessionScreen() {
 
         if (anterior.current) {
           const d = distanciaKm(anterior.current, punto);
-          // descartamos saltos de GPS: más de 200 m entre lecturas es ruido
           if (d < 0.2) {
             acumKm.current += d;
             setKm(acumKm.current);
