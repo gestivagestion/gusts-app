@@ -50,10 +50,13 @@ class GustsMotionService : Service(), SensorEventListener {
 
   override fun onSensorChanged(event: SensorEvent?) {
     event ?: return
+    // normalizamos a "g" (1.0 = gravedad terrestre) para que coincida
+    // con los umbrales que ya usa el código JS
+    val g = SensorManager.GRAVITY_EARTH
     GustsMotionModule.emit(
-      event.values[0].toDouble(),
-      event.values[1].toDouble(),
-      event.values[2].toDouble(),
+      (event.values[0] / g).toDouble(),
+      (event.values[1] / g).toDouble(),
+      (event.values[2] / g).toDouble(),
       event.timestamp.toDouble()
     )
   }
