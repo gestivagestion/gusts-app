@@ -18,13 +18,15 @@ class GustsMotionModule : Module() {
     }
 
     Function("start") {
-      val context = appContext.reactContext ?: return@Function
+      val context = appContext.reactContext ?: return@Function null
       context.startForegroundService(Intent(context, GustsMotionService::class.java))
+      null
     }
 
     Function("stop") {
-      val context = appContext.reactContext ?: return@Function
+      val context = appContext.reactContext ?: return@Function null
       context.stopService(Intent(context, GustsMotionService::class.java))
+      null
     }
   }
 
