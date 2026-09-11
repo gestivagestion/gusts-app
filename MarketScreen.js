@@ -1,19 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal,
-  TextInput, Image, Alert, Share, Linking, ActivityIndicator, RefreshControl,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView,
+  TextInput, Alert, RefreshControl, Modal, Linking, ActivityIndicator, Image,
 } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
-
-import { supabase, mensajeDeError } from './supabaseClient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { SPOTS } from './spots';
-import { SALE_BASE64 } from './logo';
-import { COBRO, DESTACADOS, textoPago } from './precios';
-import { DenunciaModal, confirmarBloqueo, getBloqueados } from './moderacion';
+import { getFavoritos } from './favorites';
+import { supabase } from './supabaseClient';
+import { setPesoCache } from './peso';
+import { COBRO, APOYOS, INSTRUCTOR, textoPago } from './precios';
+import { PIN_BASE64 } from './pinIcon';
+import InstructorScreen from './InstructorScreen';
+import { getBloqueados, desbloquear } from './moderacion';
+import {
+  getSesiones, borrarSesion, estadisticas, formatoDuracion, formatoFecha,
+} from './sessions';
 
 const COLORS = {
   primary: '#003D7A',
@@ -23,1276 +28,1451 @@ const COLORS = {
   subtitle: '#666',
 };
 
+const NIVELES = ['Aprendiendo', 'Principiante', 'Intermedio', 'Avanzado', 'Instructor'];
+
 // ------------------------------------------------------------
-// Categorías del mercado
+// Descargo de responsabilidad para instructores.
+// Si se cambia el texto hay que subir la versión: los que ya lo
+// aceptaron van a tener que aceptarlo de nuevo.
 // ------------------------------------------------------------
-const TIPOS = [
-  { id: 'equipo', label: 'Equipo', icon: 'tag-outline', color: '#FF9500',
-    titulo: 'Compra y venta', sub: 'Equipo usado entre riders' },
-  { id: 'alojamiento', label: 'Alojamiento', icon: 'home-outline', color: '#00BCD4',
-    titulo: 'Alojamiento', sub: 'Casas, deptos y cuartos cerca del agua' },
-  { id: 'viaje', label: 'Viajes', icon: 'car-outline', color: '#34C759',
-    titulo: 'Compartir viaje', sub: 'Sumate a un auto y compartan la nafta' },
-  { id: 'instructor', label: 'Clases', icon: 'school-outline', color: '#7B5BD6',
-    titulo: 'Instructores', sub: 'Clases y acompañamiento en el agua' },
-  { id: 'perdido', label: 'Perdidos', icon: 'archive-search-outline', color: '#E91E63',
-    titulo: 'Perdidos y encontrados', sub: 'Equipo que se voló, se olvidó o apareció' },
-  { id: 'reparacion', label: 'Reparación', icon: 'wrench-outline', color: '#0EA5A5',
-    titulo: 'Reparación y service', sub: 'Arreglo de kites, tablas y arneses' },
+const DESCARGO_VERSION = '2026-09';
+const DESCARGO_PUNTOS = [
+  'GUSTS es solo un lugar donde alumnos e instructores se encuentran. No organizamos, supervisamos ni participamos de las clases.',
+  'Sos el único responsable de tu habilitación, tu seguro, tu equipo y la seguridad de tus alumnos durante la clase.',
+  'El precio y el pago se acuerdan directamente con el alumno. GUSTS no cobra, no retiene ni garantiza ningún pago.',
+  'GUSTS no responde por accidentes, lesiones, daños al equipo, ni por incumplimientos de ninguna de las partes.',
+  'Declarás que la información que publicás sobre tu certificación y experiencia es verdadera. Si no lo es, damos de baja la verificación.',
 ];
 
-// ------------------------------------------------------------
-// Campos del formulario según la categoría
-// tipo: 'texto' | 'numero' | 'opciones' | 'spot' | 'largo'
-// ------------------------------------------------------------
-const CAMPOS = {
-  equipo: [
-    { k: 'titulo', label: '¿Qué vendés?', ph: 'Cometa Cabrinha 12m 2023', req: true },
-    { k: 'precio', label: 'Precio', ph: '$450.000 o USD 700', req: true },
-    { k: 'estado', label: 'Estado', tipo: 'opciones',
-      opciones: ['Nuevo', 'Como nuevo', 'Usado', 'Para reparar'] },
-    { k: 'zona', label: 'Zona / ciudad', ph: 'San Isidro, Buenos Aires', req: true },
-    { k: 'detalle', label: 'Detalle', tipo: 'largo',
-      ph: 'Año, cantidad de uso, si incluye barra, reparaciones...' },
-  ],
-  alojamiento: [
-    { k: 'titulo', label: 'Título', ph: 'Depto 2 amb a 200m del lanzamiento', req: true },
-    { k: 'precio', label: 'Precio por noche', ph: '$35.000 la noche', req: true },
-    { k: 'spot', label: 'Spot más cercano', tipo: 'spot', req: true },
-    { k: 'capacidad', label: 'Capacidad', tipo: 'opciones',
-      opciones: ['1-2 personas', '3-4 personas', '5-6 personas', '7 o más'] },
-    { k: 'estado', label: 'Tipo', tipo: 'opciones',
-      opciones: ['Casa', 'Departamento', 'Cuarto', 'Camping / motorhome'] },
-    { k: 'detalle', label: 'Detalle', tipo: 'largo',
-      ph: 'Guardado para el equipo, ducha exterior, cochera, mínimo de noches...' },
-  ],
-  viaje: [
-    { k: 'titulo', label: 'Desde dónde salís', ph: 'Salgo de Ezeiza', req: true },
-    { k: 'spot', label: 'A qué spot vas', tipo: 'spot', req: true },
-    { k: 'fecha', label: 'Cuándo', ph: 'Sáb 14/06, salgo 6:30 am', req: true },
-    { k: 'capacidad', label: 'Lugares libres', tipo: 'opciones',
-      opciones: ['1 lugar', '2 lugares', '3 lugares', '4 o más'] },
-    { k: 'precio', label: 'Aporte por persona', ph: 'Nafta y peaje a dividir' },
-    { k: 'detalle', label: 'Detalle', tipo: 'largo',
-      ph: 'Cuánto equipo entra, si volvés el mismo día, portaequipaje...' },
-  ],
-  perdido: [
-    { k: 'estado', label: '¿Qué pasó?', tipo: 'opciones',
-      opciones: ['Lo perdí', 'Lo encontré'] },
-    { k: 'titulo', label: '¿Qué es?', ph: 'Cometa Duotone 9m roja con barra', req: true },
-    { k: 'spot', label: '¿En qué spot?', tipo: 'spot', req: true },
-    { k: 'fecha', label: '¿Cuándo?', ph: 'Sábado 14/06 a la tarde', req: true },
-    { k: 'detalle', label: 'Detalle', tipo: 'largo',
-      ph: 'Marca, color, señas particulares, si tiene el nombre escrito, dónde exactamente...' },
-  ],
-  instructor: [
-    { k: 'titulo', label: 'Tu nombre o escuela', ph: 'Leandro — Clases de kite', req: true },
-    { k: 'spot', label: 'Dónde das clases', tipo: 'spot', req: true },
-    { k: 'precio', label: 'Precio', ph: '$40.000 la hora / $150.000 el curso', req: true },
-    { k: 'estado', label: 'Certificación', tipo: 'opciones',
-      opciones: ['IKO', 'VDWS', 'Otra', 'Sin certificación'] },
-    { k: 'capacidad', label: 'Nivel que enseñás', tipo: 'opciones',
-      opciones: ['Desde cero', 'Principiante', 'Intermedio', 'Todos los niveles'] },
-    { k: 'detalle', label: 'Detalle', tipo: 'largo',
-      ph: 'Años de experiencia, si incluís el equipo, seguro, idiomas...' },
-  ],
-    reparacion: [
-    { k: 'titulo', label: 'Qué reparás', ph: 'Reparación de kites, tablas y arneses', req: true },
-    { k: 'spot', label: 'Zona donde atendés', tipo: 'spot', req: true },
-    { k: 'precio', label: 'Precio', ph: 'Desde $15.000 según el trabajo', req: true },
-    { k: 'estado', label: 'Especialidad', tipo: 'opciones',
-      opciones: ['Costura de kites', 'Válvulas y vejigas', 'Tablas', 'Arneses', 'Todo tipo'] },
-    { k: 'capacidad', label: 'Tiempo de entrega', tipo: 'opciones',
-      opciones: ['24-48 hs', '3-5 días', 'Una semana o más'] },
-    { k: 'detalle', label: 'Detalle', tipo: 'largo',
-      ph: 'Años de experiencia, si retirás a domicilio, garantía del trabajo...' },
-  ],
-};
-
-const vacio = {
-  titulo: '', precio: '', estado: '', zona: '', spot: '',
-  capacidad: '', fecha: '', detalle: '', autor: '', contacto: '',
-};
-
-export default function MarketScreen() {
-  const [tipo, setTipo] = useState('equipo');
-  const [items, setItems] = useState([]);
+export default function ProfileScreen() {
+  const [sesiones, setSesiones] = useState([]);
   const [yo, setYo] = useState(null);
-  const [soyInstructor, setSoyInstructor] = useState(false);
-  const [nombres, setNombres] = useState({});
-  const [guardando, setGuardando] = useState(false);
-  const [reputacion, setReputacion] = useState({});
-  const [contactadas, setContactadas] = useState([]);
-  const [calificadas, setCalificadas] = useState([]);
-  const [calificando, setCalificando] = useState(null);
-  const [puntaje, setPuntaje] = useState(0);
-  const [comentario, setComentario] = useState('');
-  const [fotos, setFotos] = useState([]);
-  const [subiendo, setSubiendo] = useState(false);
-  const [destacando, setDestacando] = useState(null);
-  const [verificados, setVerificados] = useState([]);
-  const [bloqueados, setBloqueados] = useState([]);
-  const [denunciando, setDenunciando] = useState(null);
-  const [cargando, setCargando] = useState(true);
-  const [modal, setModal] = useState(false);
-  const [form, setForm] = useState(vacio);
-  const [buscaSpot, setBuscaSpot] = useState('');
+  const [favoritos, setFavoritos] = useState([]);
+  const [perfil, setPerfil] = useState({ nombre: '', nivel: '', peso: '', desde: '', bio: '', avatar_url: '', apoyo_total: 0 });
+  const [guardandoPerfil, setGuardandoPerfil] = useState(false);
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
+  const [editar, setEditar] = useState(false);
+  const [form, setForm] = useState(perfil);
+  const [cargando, setCargando] = useState(false);
+  const [verTodo, setVerTodo] = useState(false);
+  const [esAdmin, setEsAdmin] = useState(false);
+  const [pendientes, setPendientes] = useState([]);
+  const [reputacion, setReputacion] = useState(null);
+  const [resenas, setResenas] = useState([]);
+  const [nombresResenas, setNombresResenas] = useState({});
+  const [soyVerificado, setSoyVerificado] = useState(false);
+  const [venceVerificacion, setVenceVerificacion] = useState(null);
+  const [descargoOk, setDescargoOk] = useState(false);
+  const [descargoFecha, setDescargoFecha] = useState(null);
+  const [tildado, setTildado] = useState(false);
+  const [pedidos, setPedidos] = useState([]);
+  const [solicitudes, setSolicitudes] = useState([]);
+  const [denuncias, setDenuncias] = useState([]);
+  const [misBloqueados, setMisBloqueados] = useState([]);
+  const [modalApoyo, setModalApoyo] = useState(false);
+  const [modalInstructor, setModalInstructor] = useState(false);
+  const [panelInstructor, setPanelInstructor] = useState(false);
 
-  const cat = TIPOS.find((t) => t.id === tipo);
-  const campos = CAMPOS[tipo];
-  const visibles = items.filter((i) => i.tipo === tipo && !bloqueados.includes(i.autor));
-
-  const cargar = async () => {
+  const cargar = useCallback(async () => {
     setCargando(true);
+    setSesiones(await getSesiones());
+    const ids = await getFavoritos();
+    setFavoritos(SPOTS.filter((s) => ids.includes(s.id)));
+    // perfil desde la base
     const { data: auth } = await supabase.auth.getUser();
-    const uid = auth?.user?.id;
-    setYo(uid);
-
-    // ¿este usuario está habilitado para publicar clases?
-    if (uid) {
-      const { data: miPerfil } = await supabase
+    if (auth?.user?.id) {
+      setYo(auth.user.id);
+      const { data: p } = await supabase
         .from('profiles')
-        .select('es_instructor')
-        .eq('id', uid)
+        .select('*')
+        .eq('id', auth.user.id)
+        .single();
+
+      const { data: priv } = await supabase
+        .from('datos_privados')
+        .select('peso')
+        .eq('usuario', auth.user.id)
         .maybeSingle();
-      setSoyInstructor(!!miPerfil?.es_instructor);
-    }
 
-    const bloq = await getBloqueados();
-    setBloqueados(bloq);
-
-    const { data, error } = await supabase
-      .from('publicaciones')
-      .select('*')
-      .eq('activa', true)
-      .order('destacada_hasta', { ascending: false, nullsFirst: false })
-      .order('creado_en', { ascending: false })
-      .limit(200);
-
-    if (!error && data) {
-      setItems(data);
-      const autores = [...new Set(data.map((d) => d.autor))];
-      if (autores.length) {
-        const { data: perf } = await supabase
-          .from('profiles')
-          .select('id, nombre, verificado, verificado_hasta')
-          .in('id', autores);
-        const mapa = {};
-        const verif = [];
-        (perf || []).forEach((p) => {
-          mapa[p.id] = p.nombre || 'Rider';
-          if (p.verificado && (!p.verificado_hasta || new Date(p.verificado_hasta) > new Date())) {
-            verif.push(p.id);
-          }
+      if (p) {
+        setPerfil({
+          nombre: p.nombre || '',
+          nivel: p.nivel || '',
+          peso: priv?.peso ? String(priv.peso) : '',
+          desde: p.desde || '',
+          bio: p.bio || '',
+          avatar_url: p.avatar_url || '',
+          apoyo_total: Number(p.apoyo_total) || 0,
         });
-        setNombres(mapa);
-        setVerificados(verif);
-
-        const { data: rep } = await supabase.from('reputacion').select('*').in('usuario', autores);
-        const mapaRep = {};
-        (rep || []).forEach((r) => (mapaRep[r.usuario] = r));
-        setReputacion(mapaRep);
       }
 
-      // registramos una vista por persona y aviso (para el alcance del instructor)
-      if (uid) {
-        const ajenos = data.filter((d) => d.autor !== uid).map((d) => ({
-          publicacion_id: d.id,
-          usuario: uid,
-        }));
-        if (ajenos.length) {
-          supabase.from('vistas').upsert(ajenos, { onConflict: 'publicacion_id,usuario', ignoreDuplicates: true })
-            .then(() => {})
-            .catch(() => {});
-        }
+      // reputación en el mercado
+      const [{ data: rep }, { data: res }] = await Promise.all([
+        supabase.from('reputacion').select('*').eq('usuario', auth.user.id).maybeSingle(),
+        supabase
+          .from('calificaciones')
+          .select('*')
+          .eq('calificado', auth.user.id)
+          .order('creado_en', { ascending: false })
+          .limit(20),
+      ]);
+      setReputacion(rep || null);
+      setResenas(res || []);
+
+      if ((res || []).length) {
+        const autores = [...new Set(res.map((r) => r.autor))];
+        const { data: perf } = await supabase.from('profiles').select('id, nombre').in('id', autores);
+        const mapa = {};
+        (perf || []).forEach((x) => (mapa[x.id] = x.nombre || 'Rider'));
+        setNombresResenas(mapa);
       }
 
-      if (uid) {
-        const [{ data: cont }, { data: cal }] = await Promise.all([
-          supabase.from('contactos').select('publicacion_id').eq('usuario', uid),
-          supabase.from('calificaciones').select('publicacion_id').eq('autor', uid),
-        ]);
-        setContactadas((cont || []).map((c) => c.publicacion_id));
-        setCalificadas((cal || []).map((c) => c.publicacion_id));
+      setSoyVerificado(
+        !!p?.verificado && (!p?.verificado_hasta || new Date(p.verificado_hasta) > new Date())
+      );
+      setVenceVerificacion(p?.verificado_hasta || null);
+
+      // descargo: vale solo si aceptó la versión vigente
+      const aceptado = !!p?.descargo_aceptado && p?.descargo_version === DESCARGO_VERSION;
+      setDescargoOk(aceptado);
+      setDescargoFecha(aceptado ? p?.descargo_fecha : null);
+      setTildado(aceptado);
+
+      const ids = await getBloqueados();
+      if (ids.length) {
+        const { data: bl } = await supabase.from('profiles').select('id, nombre').in('id', ids);
+        setMisBloqueados(bl || []);
+      } else {
+        setMisBloqueados([]);
+      }
+
+      const { data: mis } = await supabase
+        .from('solicitudes')
+        .select('*')
+        .eq('usuario', auth.user.id)
+        .eq('estado', 'pendiente');
+      setPedidos(mis || []);
+
+      const admin = !!p?.admin;
+      setEsAdmin(admin);
+      if (admin) {
+        const { data: props } = await supabase
+          .from('spots_propuestos')
+          .select('*')
+          .eq('estado', 'pendiente')
+          .order('creado_en', { ascending: true });
+        setPendientes(props || []);
+
+        const { data: sol } = await supabase
+          .from('solicitudes_detalle')
+          .select('*')
+          .eq('estado', 'pendiente')
+          .order('creado_en', { ascending: true });
+        setSolicitudes(sol || []);
+
+        const { data: den } = await supabase
+          .from('denuncias_detalle')
+          .select('*')
+          .eq('estado', 'pendiente')
+          .order('creado_en', { ascending: true });
+        setDenuncias(den || []);
       }
     }
+
     setCargando(false);
-  };
+  }, []);
 
   useEffect(() => {
     cargar();
   }, []);
 
-  const MAX_FOTOS = 3;
+  const guardarPerfil = async () => {
+    if (!yo) return;
+    setGuardandoPerfil(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        nombre: form.nombre.trim() || null,
+        nivel: form.nivel || null,
+        desde: form.desde || null,
+        bio: form.bio?.trim() || null,
+      })
+      .eq('id', yo);
 
-  const agregarFoto = async () => {
-    if (fotos.length >= MAX_FOTOS) {
-      Alert.alert('Máximo alcanzado', `Podés subir hasta ${MAX_FOTOS} fotos.`);
+    // el peso va en la tabla privada, no en el perfil público
+    await supabase
+      .from('datos_privados')
+      .upsert({ usuario: yo, peso: form.peso ? Number(form.peso) : null });
+
+    setGuardandoPerfil(false);
+
+    if (error) {
+      Alert.alert('No se pudo guardar', error.message);
       return;
     }
+    await setPesoCache(form.peso ? Number(form.peso) : null);
+    setPerfil(form);
+    setEditar(false);
+  };
+
+  const cambiarFoto = async () => {
     const permiso = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permiso.granted) {
-      Alert.alert('Sin permiso', 'Necesitamos acceso a tus fotos.');
+      Alert.alert('Sin permiso', 'Necesitamos acceso a tus fotos para poner el avatar.');
       return;
     }
+
     const r = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
       quality: 1,
     });
     if (r.canceled || !r.assets?.[0]?.uri) return;
 
-    setSubiendo(true);
+    setSubiendoFoto(true);
     try {
-      // 900px de ancho alcanza para verse bien y pesa poco
+      // Achicamos a 256px antes de subir: en pantalla se ve a 40px,
+      // así que subir la foto original sería tirar datos y transferencia.
       const chica = await ImageManipulator.manipulateAsync(
         r.assets[0].uri,
-        [{ resize: { width: 900 } }],
-        { compress: 0.6, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        [{ resize: { width: 256, height: 256 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
       );
-      const ruta = `${yo}/${Date.now()}_${fotos.length}.jpg`;
-      const { error } = await supabase.storage
-        .from('publicaciones')
-        .upload(ruta, decode(chica.base64), { contentType: 'image/jpeg' });
-      if (error) throw error;
 
-      const { data: pub } = supabase.storage.from('publicaciones').getPublicUrl(ruta);
-      setFotos((f) => [...f, pub.publicUrl]);
+      const ruta = `${yo}/avatar_${Date.now()}.jpg`;
+
+      const { error: errSubida } = await supabase.storage
+        .from('avatars')
+        .upload(ruta, decode(chica.base64), {
+          contentType: 'image/jpeg',
+          upsert: true,
+        });
+      if (errSubida) throw errSubida;
+
+      const { data: pub } = supabase.storage.from('avatars').getPublicUrl(ruta);
+      const url = pub.publicUrl;
+
+      const { error: errPerfil } = await supabase
+        .from('profiles')
+        .update({ avatar_url: url })
+        .eq('id', yo);
+      if (errPerfil) throw errPerfil;
+
+      setPerfil((p) => ({ ...p, avatar_url: url }));
     } catch (e) {
       Alert.alert('No se pudo subir la foto', e.message || 'Probá de nuevo.');
     } finally {
-      setSubiendo(false);
+      setSubiendoFoto(false);
     }
   };
 
-  const quitarFoto = (url) => setFotos((f) => f.filter((x) => x !== url));
-
-  // ------------------------------------------------------------
-  // Control de instructor
-  // ------------------------------------------------------------
-  const avisoInstructor = () => {
-    Alert.alert(
-      'Solo para instructores verificados',
-      'Para publicar clases necesitás estar verificado como instructor.\n\n' +
-        'Escribinos a hola@gustskite.com contándonos dónde das clases, tu certificación y ' +
-        'años de experiencia. Revisamos el pedido y te habilitamos la categoría.',
-      [
-        { text: 'Ahora no', style: 'cancel' },
-        {
-          text: 'Escribir',
-          onPress: () =>
-            Linking.openURL(
-              'mailto:hola@gustskite.com?subject=' +
-                encodeURIComponent('Quiero publicar clases en GUSTS')
-            ).catch(() => {}),
-        },
-      ]
-    );
-  };
-
-  const abrirFormulario = () => {
-    if (tipo === 'instructor' && !soyInstructor) {
-      avisoInstructor();
-      return;
-    }
-    setModal(true);
-  };
-
-  const publicar = async () => {
-    if (tipo === 'instructor' && !soyInstructor) {
-      avisoInstructor();
-      return;
-    }
-    const faltan = campos.filter((c) => c.req && !form[c.k].trim());
-    if (faltan.length) {
-      Alert.alert('Faltan datos', `Completá: ${faltan.map((f) => f.label).join(', ')}`);
-      return;
-    }
-    if (!form.contacto.trim()) {
-      Alert.alert('Falta el contacto', 'Poné un WhatsApp o un mail para que te puedan escribir.');
-      return;
-    }
-    setGuardando(true);
-    const { data: nueva, error } = await supabase
-      .from('publicaciones')
-      .insert({
-        autor: yo,
-        tipo,
-        titulo: form.titulo.trim(),
-        precio: form.precio.trim() || null,
-        zona: form.zona.trim() || null,
-        spot: form.spot || null,
-        fecha: form.fecha.trim() || null,
-        capacidad: form.capacidad || null,
-        estado: form.estado || null,
-        detalle: form.detalle.trim() || null,
-        fotos,
+  // deja registrado que aceptó el descargo, con fecha y versión
+  const registrarDescargo = async () => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        descargo_aceptado: true,
+        descargo_fecha: new Date().toISOString(),
+        descargo_version: DESCARGO_VERSION,
       })
-      .select()
-      .single();
-    setGuardando(false);
-
+      .eq('id', yo);
     if (error) {
-      // el CHECK de la base también frena esto; mostramos algo entendible
-      const msg = String(error.message || '');
-      if (msg.includes('solo_instructores') || msg.includes('puede_publicar_clases')) {
-        setModal(false);
-        avisoInstructor();
-        return;
-      }
-      Alert.alert('No se pudo publicar', mensajeDeError(error));
+      Alert.alert('No se pudo registrar la aceptación', error.message);
+      return false;
+    }
+    setDescargoOk(true);
+    return true;
+  };
+
+  // pedido de apoyo voluntario (único caso pago que queda en esta pantalla)
+  const pedir = async (tipo, monto, dias, concepto) => {
+    const { error } = await supabase
+      .from('solicitudes')
+      .insert({ usuario: yo, tipo, monto, dias: dias || null });
+    if (error) {
+      Alert.alert('No se pudo registrar', error.message);
       return;
     }
-
-    // el teléfono va aparte: no se puede leer sin tocar "Contactar"
-    await supabase
-      .from('contactos_privados')
-      .insert({ publicacion_id: nueva.id, contacto: form.contacto.trim() });
-    setForm(vacio);
-    setFotos([]);
-    setBuscaSpot('');
-    setModal(false);
+    setModalApoyo(false);
     cargar();
-  };
 
-  const borrar = (item) => {
-    Alert.alert('Borrar publicación', `¿Eliminar "${item.titulo}"?`, [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: 'Borrar',
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await supabase.from('publicaciones').delete().eq('id', item.id);
-          if (error) Alert.alert('No se pudo borrar', mensajeDeError(error));
-          else cargar();
-        },
-      },
-    ]);
-  };
-
-  const diasRestantes = (item) => {
-    if (!item.vence_el) return null;
-    return Math.ceil((new Date(item.vence_el) - new Date()) / 86400000);
-  };
-
-  const renovar = async (item) => {
-    const { error } = await supabase.rpc('renovar_publicacion', { pid: item.id });
-    if (error) {
-      Alert.alert('No se pudo renovar', mensajeDeError(error));
-      return;
-    }
-    Alert.alert('Renovada', `Tu publicación vuelve a estar activa por ${tipo === 'alojamiento' ? 60 : 30} días.`);
-    cargar();
-  };
-
-  const estaDestacada = (item) =>
-    item.destacada_hasta && new Date(item.destacada_hasta) > new Date();
-
-  const pedirDestacar = async (opcion) => {
-    const { error } = await supabase.from('solicitudes').insert({
-      usuario: yo,
-      tipo: 'destacar',
-      publicacion_id: destacando.id,
-      monto: opcion.monto,
-      dias: opcion.dias,
-    });
-    if (error) {
-      Alert.alert('No se pudo registrar', mensajeDeError(error));
-      return;
-    }
-    const cuerpo = encodeURIComponent(
-      textoPago(`destacar mi aviso "${destacando.titulo}" por ${opcion.label}`, opcion.monto)
-    );
-    setDestacando(null);
+    const cuerpo = encodeURIComponent(textoPago(concepto, monto));
     Alert.alert(
-      'Pedido registrado',
-      `Transferí USD ${opcion.monto} a ${COBRO.alias} y mandanos el comprobante. Lo activamos apenas lo veamos.`,
+      'Gracias!',
+      `Transferí USD ${monto} a ${COBRO.alias} (${COBRO.titular}) y mandanos el comprobante.`,
       [
         { text: 'Después', style: 'cancel' },
         {
           text: 'Mandar comprobante',
           onPress: () =>
             Linking.openURL(
-              `mailto:${COBRO.mail}?subject=${encodeURIComponent('Destacar aviso en GUSTS')}&body=${cuerpo}`
+              `mailto:${COBRO.mail}?subject=${encodeURIComponent('GUSTS · ' + concepto)}&body=${cuerpo}`
             ).catch(() => {}),
         },
       ]
     );
   };
 
-  const enviarCalificacion = async () => {
-    if (!puntaje) {
-      Alert.alert('Falta la puntuación', 'Elegí de 1 a 5 estrellas.');
-      return;
-    }
-    setGuardando(true);
-    const { error } = await supabase.from('calificaciones').insert({
-      publicacion_id: calificando.id,
-      autor: yo,
-      calificado: calificando.autor,
-      puntaje,
-      comentario: comentario.trim() || null,
-    });
-    setGuardando(false);
-
-    if (error) {
+  // pedido de verificación como instructor: gratis, requiere el descargo aceptado
+  const pedirVerificacion = async () => {
+    if (!tildado) {
       Alert.alert(
-        'No se pudo calificar',
-        error.message.includes('duplicate')
-          ? 'Ya calificaste esta publicación.'
-          : 'Solo podés calificar si contactaste al que publicó.'
+        'Falta aceptar el descargo',
+        'Tenés que leer y aceptar las condiciones antes de pedir la verificación.'
       );
       return;
     }
-    setCalificadas((c) => [...c, calificando.id]);
-    setCalificando(null);
-    setPuntaje(0);
-    setComentario('');
+    if (!descargoOk) {
+      const ok = await registrarDescargo();
+      if (!ok) return;
+    }
+
+    const { error } = await supabase
+      .from('solicitudes')
+      .insert({ usuario: yo, tipo: 'instructor', monto: 0 });
+    if (error) {
+      Alert.alert('No se pudo registrar', error.message);
+      return;
+    }
+    setModalInstructor(false);
     cargar();
-  };
-
-  const textoItem = (item) => {
-    const c = TIPOS.find((t) => t.id === item.tipo);
-    let t =
-      item.tipo === 'perdido'
-        ? `${item.estado === 'Lo encontré' ? '🔎 APARECIÓ' : '⚠️ SE PERDIÓ'} · ${item.titulo}\n`
-        : `${c.label.toUpperCase()} · ${item.titulo}\n`;
-    if (item.precio) t += `💵 ${item.precio}\n`;
-    if (item.spot) t += `📍 ${item.spot}\n`;
-    if (item.fecha) t += `🗓 ${item.fecha}\n`;
-    if (item.zona) t += `📍 ${item.zona}\n`;
-    if (item.capacidad) t += `👥 ${item.capacidad}\n`;
-    if (item.estado) t += `🏷 ${item.estado}\n`;
-    if (item.detalle) t += `\n${item.detalle}\n`;
-    if (item.autor) t += `\nPublica: ${nombres[item.autor] || 'Un rider'}`;
-    return t + `\n\nVisto en GUSTS · Kitesurf App`;
-  };
-
-  const compartir = async (item) => {
-    try {
-      await Share.share({ message: textoItem(item) });
-    } catch (e) {
-      console.log(e);
-    }
-  };
-
-  const contactar = async (item) => {
-    // la función devuelve el contacto y deja registrado el pedido
-    const { data, error } = await supabase.rpc('ver_contacto', { pid: item.id });
-    if (error || !data) {
-      Alert.alert('No se pudo obtener el contacto', error?.message || 'Probá de nuevo.');
-      return;
-    }
-    if (item.autor !== yo && !contactadas.includes(item.id)) {
-      setContactadas((c) => [...c, item.id]);
-    }
-
-    const c = String(data).trim();
-    if (c.includes('@')) {
-      Linking.openURL(`mailto:${c}?subject=${encodeURIComponent('Consulta por: ' + item.titulo)}`)
-        .catch(() => Alert.alert('Sin app de mail', 'No se pudo abrir el correo.'));
-      return;
-    }
-    const num = c.replace(/\D/g, '');
-    if (num.length < 8) {
-      Alert.alert('Contacto', c);
-      return;
-    }
-    const msg = encodeURIComponent(`Hola! Te escribo por "${item.titulo}" que vi en GUSTS.`);
-    Linking.openURL(`https://wa.me/${num}?text=${msg}`)
-      .catch(() => Alert.alert('Contacto', c));
-  };
-
-  // sugerencias de spots para el campo tipo 'spot'
-  const sugerencias = buscaSpot.length < 2 ? [] :
-    SPOTS.filter((s) =>
-      (s.name + ' ' + s.region).toLowerCase().includes(buscaSpot.toLowerCase())
-    ).slice(0, 6);
-
-  if (cargando) {
-    return (
-      <View style={styles.loader}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-      </View>
+    Alert.alert(
+      'Pedido enviado',
+      'Revisamos tu perfil y te activamos la verificación como instructor. Te avisamos cuando esté lista.'
     );
+  };
+
+  const verDescargo = () => {
+    Alert.alert(
+      'Condiciones para instructores',
+      DESCARGO_PUNTOS.map((p, i) => `${i + 1}. ${p}`).join('\n\n') +
+        (descargoFecha
+          ? `\n\nAceptado el ${new Date(descargoFecha).toLocaleDateString('es-AR')} (versión ${DESCARGO_VERSION}).`
+          : ''),
+      [{ text: 'Cerrar' }]
+    );
+  };
+
+  const resolverDenuncia = (d) => {
+    const opciones = [{ text: 'Cerrar', style: 'cancel' }];
+    if (d.publicacion_id) {
+      opciones.push({
+        text: 'Bajar el aviso',
+        onPress: () => aplicarDenuncia(d, 'bajar_aviso'),
+      });
+    }
+    if (d.denunciado) {
+      opciones.push({
+        text: 'Suspender al usuario',
+        style: 'destructive',
+        onPress: () => aplicarDenuncia(d, 'suspender'),
+      });
+    }
+    opciones.push({ text: 'Descartar', onPress: () => aplicarDenuncia(d, 'descartar') });
+
+    Alert.alert(
+      d.motivo,
+      (d.detalle || 'Sin detalle') +
+        (d.publicacion_titulo ? `\n\nAviso: ${d.publicacion_titulo}` : '') +
+        (d.mensaje_texto ? `\n\nMensaje: ${d.mensaje_texto}` : ''),
+      opciones
+    );
+  };
+
+  const aplicarDenuncia = async (d, accion) => {
+    const { error } = await supabase.rpc('resolver_denuncia', {
+      did: d.id,
+      accion,
+      nota: null,
+    });
+    if (error) {
+      Alert.alert('No se pudo resolver', error.message);
+      return;
+    }
+    setDenuncias((l) => l.filter((x) => x.id !== d.id));
+  };
+
+  const quitarBloqueo = (b) => {
+    Alert.alert('Desbloquear', `¿Volver a ver a ${b.nombre || 'este rider'}?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Desbloquear',
+        onPress: async () => {
+          await desbloquear(b.id);
+          setMisBloqueados((l) => l.filter((x) => x.id !== b.id));
+        },
+      },
+    ]);
+  };
+
+  const cancelarPedido = (pedido) => {
+    Alert.alert(
+      'Cancelar pedido',
+      'Se da de baja la solicitud.',
+      [
+        { text: 'Volver', style: 'cancel' },
+        {
+          text: 'Cancelar pedido',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await supabase.from('solicitudes').delete().eq('id', pedido.id);
+            if (error) Alert.alert('No se pudo cancelar', error.message);
+            else cargar();
+          },
+        },
+      ]
+    );
+  };
+
+  const darDeBaja = () => {
+    Alert.alert(
+      'Dar de baja la verificación',
+      'Perdés la insignia y el panel de instructor. Tus turnos cargados no se borran, y podés volver a pedir la verificación cuando quieras.',
+      [
+        { text: 'Volver', style: 'cancel' },
+        {
+          text: 'Dar de baja',
+          style: 'destructive',
+          onPress: async () => {
+            const { error } = await supabase.rpc('cancelar_verificacion');
+            if (error) Alert.alert('No se pudo dar de baja', error.message);
+            else {
+              setPanelInstructor(false);
+              cargar();
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const eliminarCuenta = () => {
+    Alert.alert(
+      'Eliminar cuenta',
+      'Se borra todo: tu perfil, tus publicaciones, tus mensajes, tus sesiones y tus turnos. No se puede deshacer.',
+      [
+        { text: 'Volver', style: 'cancel' },
+        {
+          text: 'Continuar',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert(
+              '¿Seguro?',
+              'Última confirmación. Después de esto no hay vuelta atrás.',
+              [
+                { text: 'No, volver', style: 'cancel' },
+                {
+                  text: 'Sí, eliminar',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const { error } = await supabase.rpc('eliminar_mi_cuenta');
+                    if (error) {
+                      Alert.alert('No se pudo eliminar', error.message);
+                      return;
+                    }
+                    await supabase.auth.signOut();
+                  },
+                },
+              ]
+            ),
+        },
+      ]
+    );
+  };
+
+  const resolver = async (sol, aprobar) => {
+    const { error } = aprobar
+      ? await supabase.rpc('aprobar_solicitud', { sid: sol.id })
+      : await supabase.rpc('rechazar_solicitud', { sid: sol.id, motivo: null });
+    if (error) {
+      Alert.alert('No se pudo resolver', error.message);
+      return;
+    }
+    setSolicitudes((l) => l.filter((x) => x.id !== sol.id));
+  };
+
+  const moderar = async (prop, decision) => {
+    const { error } = await supabase
+      .from('spots_propuestos')
+      .update({ estado: decision })
+      .eq('id', prop.id);
+    if (error) {
+      Alert.alert('No se pudo actualizar', error.message);
+      return;
+    }
+    setPendientes((p) => p.filter((x) => x.id !== prop.id));
+  };
+
+  const eliminar = (s) => {
+    Alert.alert('Borrar sesión', `${s.spotNombre || 'Sesión'} · ${s.distanciaKm} km`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Borrar',
+        style: 'destructive',
+        onPress: async () => setSesiones(await borrarSesion(s.id)),
+      },
+    ]);
+  };
+
+  const st = estadisticas(sesiones);
+  const visibles = verTodo ? sesiones : sesiones.slice(0, 8);
+
+  if (panelInstructor) {
+    return <InstructorScreen yo={yo} volver={() => { setPanelInstructor(false); cargar(); }} />;
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: COLORS.light }}>
-      {/* Selector de categoría */}
-      <View style={styles.tabsWrap}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsContent}>
-          {TIPOS.map((t) => {
-            const activa = t.id === tipo;
-            return (
-              <TouchableOpacity
-                key={t.id}
-                style={[styles.catChip, activa && { backgroundColor: t.color, borderColor: t.color }]}
-                onPress={() => setTipo(t.id)}
-              >
-                <MaterialCommunityIcons name={t.icon} size={16} color={activa ? '#fff' : t.color} />
-                <Text style={[styles.catText, activa && { color: '#fff' }]}>{t.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+    <ScrollView
+      style={{ flex: 1, backgroundColor: COLORS.light }}
+      refreshControl={<RefreshControl refreshing={cargando} onRefresh={cargar} tintColor={COLORS.primary} />}
+    >
+      {/* Cabecera */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={cambiarFoto} disabled={subiendoFoto} activeOpacity={0.8}>
+          <View style={styles.avatar}>
+            {subiendoFoto ? (
+              <ActivityIndicator color="#fff" />
+            ) : perfil.avatar_url ? (
+              <Image source={{ uri: perfil.avatar_url }} style={styles.avatarImg} />
+            ) : (
+              <MaterialCommunityIcons name="account" size={52} color="#fff" />
+            )}
+          </View>
+          <View style={styles.camara}>
+            <MaterialCommunityIcons name="camera" size={14} color="#fff" />
+          </View>
+        </TouchableOpacity>
+        <Text style={styles.nombre}>{perfil.nombre || 'Tu perfil'}</Text>
+        <Text style={styles.subtitulo}>
+          {perfil.nivel || 'Nivel sin definir'}
+          {perfil.desde ? ` · navega desde ${perfil.desde}` : ''}
+        </Text>
+        {!!perfil.bio && <Text style={styles.bio}>{perfil.bio}</Text>}
+        <TouchableOpacity
+          style={styles.editar}
+          onPress={() => {
+            setForm(perfil);
+            setEditar(true);
+          }}
+        >
+          <MaterialCommunityIcons name="pencil" size={14} color="#fff" />
+          <Text style={styles.editarText}>Editar</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={{ padding: 14, paddingBottom: 90 }}
-        refreshControl={<RefreshControl refreshing={cargando} onRefresh={cargar} tintColor={COLORS.primary} />}
-      >
-        {/* Encabezado */}
-        <View style={[styles.header, { backgroundColor: cat.id === 'equipo' ? COLORS.primary : cat.color }]}>
-          {cat.id === 'equipo' ? (
-            <Image source={{ uri: SALE_BASE64 }} style={styles.headerIcon} resizeMode="contain" />
-          ) : (
-            <View style={styles.headerIconBox}>
-              <MaterialCommunityIcons name={cat.icon} size={26} color="#fff" />
-            </View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>{cat.titulo}</Text>
-            <Text style={styles.headerSub}>{cat.sub}</Text>
-          </View>
+      {/* Estadísticas */}
+      <View style={styles.bloque}>
+        <Text style={styles.seccion}>Tus números</Text>
+        <View style={styles.grid}>
+          <Stat valor={st.total} label="Sesiones" icono="kite-outline" />
+          <Stat valor={st.horas.toFixed(1)} label="Horas en el agua" icono="clock-outline" />
+          <Stat valor={st.km.toFixed(1)} label="Kilómetros" icono="map-marker-distance" />
+          <Stat valor={st.velMax.toFixed(1)} label="Velocidad máx. (kt)" icono="rocket-launch-outline" destacado />
+          <Stat valor={st.spots} label="Spots navegados" icono="map-outline" />
+          <Stat valor={st.vientoMax || '—'} label="Viento más fuerte (kt)" icono="weather-windy" />
+          <Stat valor={st.alturaMax.toFixed(1)} label="Salto más alto (m)" icono="arrow-up-bold" destacado />
+          <Stat valor={st.saltos} label="Saltos totales" icono="chart-timeline-variant" />
+          <Stat valor={st.airtimeMax ? st.airtimeMax.toFixed(1) : '0'} label="Airtime máx. (s)" icono="timer-outline" />
         </View>
 
-        {tipo === 'instructor' && !soyInstructor && (
-          <View style={styles.avisoInstructor}>
-            <MaterialCommunityIcons name="school-outline" size={16} color="#4a3a8a" />
-            <Text style={styles.avisoInstructorText}>
-              Esta categoría es solo para instructores verificados: revisamos a mano quién
-              enseña para que nadie dé clases sin respaldo. ¿Sos instructor? Escribinos a
-              hola@gustskite.com y te habilitamos.
+        {st.mejorSesion && (
+          <View style={styles.record}>
+            <MaterialCommunityIcons name="trophy-outline" size={18} color={COLORS.accent} />
+            <Text style={styles.recordText}>
+              Tu sesión más larga: {st.mejorSesion.distanciaKm} km en{' '}
+              {st.mejorSesion.spotNombre || 'un spot sin identificar'}
+              {st.alturaMax > 0 ? `. Tu mejor salto: ${st.alturaMax.toFixed(1)} m` : ''}
             </Text>
           </View>
         )}
+      </View>
 
-        {tipo === 'instructor' && soyInstructor && (
-          <View style={styles.avisoInstructorOk}>
-            <MaterialCommunityIcons name="check-decagram" size={16} color="#0a7d33" />
-            <Text style={styles.avisoInstructorOkText}>
-              Estás habilitado para publicar clases. Recordá que GUSTS solo conecta: el
-              acuerdo y el pago son entre vos y el alumno.
-            </Text>
-          </View>
-        )}
-
-        {tipo === 'perdido' && (
-          <View style={styles.avisoPerdidos}>
-            <MaterialCommunityIcons name="information-outline" size={16} color="#8a2a52" />
-            <Text style={styles.avisoPerdidosText}>
-              Si encontraste algo, no publiques todas las señas: guardate un detalle para
-              confirmar que quien reclama es el dueño.
-            </Text>
-          </View>
-        )}
-
-        {visibles.length === 0 && (
-          <View style={styles.vacio}>
-            <MaterialCommunityIcons name={cat.icon} size={54} color="#c9d6e2" />
-            <Text style={styles.vacioTitulo}>Todavía no hay publicaciones</Text>
-            <Text style={styles.vacioTexto}>
-              {tipo === 'instructor' && !soyInstructor
-                ? 'Cuando haya instructores verificados los vas a ver acá.'
-                : 'Tocá el botón de abajo para publicar la primera.'}
-            </Text>
-          </View>
-        )}
-
-        {visibles.map((item) => (
-          <View key={item.id} style={[styles.card, { borderLeftColor: cat.color }]}>
-            {estaDestacada(item) && (
-              <View style={styles.cintaDestacado}>
-                <MaterialCommunityIcons name="star-four-points" size={12} color="#8a5a00" />
-                <Text style={styles.cintaTexto}>DESTACADO</Text>
+      {/* Moderación (solo admin) */}
+      {esAdmin && (
+        <View style={styles.bloque}>
+          <View style={styles.modHeader}>
+            <MaterialCommunityIcons name="shield-check-outline" size={18} color={COLORS.primary} />
+            <Text style={styles.seccion}>Spots por aprobar</Text>
+            {pendientes.length > 0 && (
+              <View style={styles.modBadge}>
+                <Text style={styles.modBadgeText}>{pendientes.length}</Text>
               </View>
             )}
+          </View>
 
-            <View style={styles.cardTop}>
-              <Text style={styles.cardTitle}>{item.titulo}</Text>
-              {item.autor === yo ? (
-                <TouchableOpacity onPress={() => borrar(item)} style={{ padding: 4 }}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={19} color="#c0392b" />
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={{ padding: 4 }}
-                  onPress={() =>
-                    Alert.alert(item.titulo, '¿Qué querés hacer?', [
-                      { text: 'Cancelar', style: 'cancel' },
-                      {
-                        text: 'Denunciar aviso',
-                        onPress: () =>
-                          setDenunciando({
-                            usuario: item.autor,
-                            publicacion: item.id,
-                            descripcion: item.titulo,
-                          }),
-                      },
-                      {
-                        text: 'Bloquear a quien publica',
-                        style: 'destructive',
-                        onPress: () =>
-                          confirmarBloqueo(
-                            { id: item.autor, nombre: nombres[item.autor] },
-                            setBloqueados
-                          ),
-                      },
-                    ])
-                  }
-                >
-                  <MaterialCommunityIcons name="dots-vertical" size={19} color="#b6c3ce" />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {!!item.fotos?.length && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 7, marginTop: 9 }}
-              >
-                {item.fotos.map((u, i) => (
-                  <Image key={i} source={{ uri: u }} style={styles.fotoAviso} />
-                ))}
-              </ScrollView>
-            )}
-
-            {item.tipo === 'perdido' && !!item.estado && (
-              <View
-                style={[
-                  styles.perdidoBadge,
-                  { backgroundColor: item.estado === 'Lo encontré' ? '#34C759' : '#E91E63' },
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name={item.estado === 'Lo encontré' ? 'hand-heart-outline' : 'alert-outline'}
-                  size={12}
-                  color="#fff"
-                />
-                <Text style={styles.perdidoBadgeText}>
-                  {item.estado === 'Lo encontré' ? 'APARECIÓ' : 'SE PERDIÓ'}
+          {pendientes.length === 0 ? (
+            <Text style={styles.vacio}>No hay propuestas pendientes.</Text>
+          ) : (
+            pendientes.map((p) => (
+              <View key={p.id} style={styles.propuesta}>
+                <Text style={styles.propNombre}>{p.nombre}</Text>
+                <Text style={styles.propMeta}>
+                  {[p.region, p.pais].filter(Boolean).join(', ')} · {p.lat?.toFixed(4)}, {p.lng?.toFixed(4)}
                 </Text>
+                <Text style={styles.propMeta}>
+                  {p.water || '—'} · {p.wind || 'sin viento'} · {p.wind_min}-{p.wind_max} kt · {p.level}
+                </Text>
+                {!!p.water_desc && <Text style={styles.propDesc}>{p.water_desc}</Text>}
+                <View style={styles.propAcciones}>
+                  <TouchableOpacity
+                    style={[styles.propBtn, { backgroundColor: '#34C759' }]}
+                    onPress={() => moderar(p, 'aprobado')}
+                  >
+                    <MaterialCommunityIcons name="check" size={16} color="#fff" />
+                    <Text style={styles.propBtnText}>Aprobar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.propBtn, { backgroundColor: '#c0392b' }]}
+                    onPress={() =>
+                      Alert.alert('Rechazar', `¿Rechazar "${p.nombre}"?`, [
+                        { text: 'Cancelar', style: 'cancel' },
+                        { text: 'Rechazar', style: 'destructive', onPress: () => moderar(p, 'rechazado') },
+                      ])
+                    }
+                  >
+                    <MaterialCommunityIcons name="close" size={16} color="#fff" />
+                    <Text style={styles.propBtnText}>Rechazar</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            )}
+            ))
+          )}
+        </View>
+      )}
 
-            {!!item.precio && <Text style={[styles.precio, { color: cat.color }]}>{item.precio}</Text>}
-
-            <View style={styles.metaRow}>
-              {!!item.spot && <Meta icon="map-marker" text={item.spot} />}
-              {!!item.zona && <Meta icon="map-marker" text={item.zona} />}
-              {!!item.fecha && <Meta icon="calendar" text={item.fecha} />}
-              {!!item.capacidad && <Meta icon="account-group" text={item.capacidad} />}
-              {!!item.estado && item.tipo !== 'perdido' && <Meta icon="tag" text={item.estado} />}
+      {/* Denuncias (solo admin) */}
+      {esAdmin && denuncias.length > 0 && (
+        <View style={styles.bloque}>
+          <View style={styles.modHeader}>
+            <MaterialCommunityIcons name="flag-outline" size={18} color="#c0392b" />
+            <Text style={styles.seccion}>Denuncias</Text>
+            <View style={[styles.modBadge, { backgroundColor: '#c0392b' }]}>
+              <Text style={styles.modBadgeText}>{denuncias.length}</Text>
             </View>
+          </View>
 
-            {!!item.detalle && <Text style={styles.detalle}>{item.detalle}</Text>}
-
-            {item.tipo === 'instructor' && (
-              <Text style={styles.notaClases}>
-                Las clases se acuerdan y se pagan directamente con el instructor. GUSTS no
-                participa del pago ni responde por lo que ocurra durante la clase.
+          {denuncias.map((d) => (
+            <TouchableOpacity
+              key={d.id}
+              style={[styles.propuesta, { borderLeftColor: '#c0392b' }]}
+              onPress={() => resolverDenuncia(d)}
+            >
+              <Text style={styles.propNombre}>{d.motivo}</Text>
+              <Text style={styles.propMeta}>
+                {d.denunciante_nombre} denunció a {d.denunciado_nombre || 'un contenido'}
               </Text>
-            )}
+              {!!d.publicacion_titulo && (
+                <Text style={styles.propMeta}>Aviso: {d.publicacion_titulo}</Text>
+              )}
+              {!!d.detalle && <Text style={styles.propDesc}>{d.detalle}</Text>}
+              <Text style={styles.tocarPara}>Tocá para resolver</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
-            <View style={styles.autorFila}>
-              <Text style={styles.autorLinea}>
-                {item.autor === yo ? 'Publicaste vos' : `Publica ${nombres[item.autor] || 'un rider'}`}
+      {/* Solicitudes pendientes (solo admin) */}
+      {esAdmin && solicitudes.length > 0 && (
+        <View style={styles.bloque}>
+          <View style={styles.modHeader}>
+            <MaterialCommunityIcons name="cash-multiple" size={18} color={COLORS.primary} />
+            <Text style={styles.seccion}>Pagos y pedidos por confirmar</Text>
+            <View style={styles.modBadge}>
+              <Text style={styles.modBadgeText}>{solicitudes.length}</Text>
+            </View>
+          </View>
+
+          {solicitudes.map((s) => (
+            <View key={s.id} style={styles.propuesta}>
+              <Text style={styles.propNombre}>
+                {s.tipo === 'apoyo' ? 'Apoyo' : s.tipo === 'destacar' ? 'Destacar aviso' : 'Verificar instructor'}
+                {s.tipo !== 'instructor' ? ` · USD ${s.monto}` : ' (gratis)'}
               </Text>
-              {verificados.includes(item.autor) && (
-                <View style={styles.verifChip}>
-                  <MaterialCommunityIcons name="check-decagram" size={12} color="#0a7d33" />
-                  <Text style={styles.verifTexto}>Verificado</Text>
-                </View>
+              <Text style={styles.propMeta}>{s.nombre} · {s.email}</Text>
+              {!!s.publicacion_titulo && (
+                <Text style={styles.propMeta}>Aviso: {s.publicacion_titulo}</Text>
               )}
-              {reputacion[item.autor] ? (
-                <View style={styles.repChip}>
-                  <MaterialCommunityIcons name="star" size={12} color="#FFB300" />
-                  <Text style={styles.repTexto}>
-                    {reputacion[item.autor].promedio} ({reputacion[item.autor].total})
-                  </Text>
-                </View>
-              ) : (
-                item.autor !== yo && <Text style={styles.sinRep}>sin calificaciones</Text>
-              )}
-            </View>
-
-            <View style={styles.acciones}>
-              <TouchableOpacity style={[styles.btn, { backgroundColor: cat.color }]} onPress={() => contactar(item)}>
-                <MaterialCommunityIcons name="message-text-outline" size={17} color="#fff" />
-                <Text style={styles.btnText}>Contactar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btnGhost} onPress={() => compartir(item)}>
-                <MaterialCommunityIcons name="share-variant" size={17} color={COLORS.primary} />
-                <Text style={styles.btnGhostText}>Compartir</Text>
-              </TouchableOpacity>
-            </View>
-
-            {(() => {
-              const d = diasRestantes(item);
-              if (d === null) return null;
-              if (item.autor === yo) {
-                return (
-                  <View style={styles.vencRow}>
-                    <Text style={[styles.vencText, d <= 0 && { color: '#c0392b' }, d > 0 && d <= 7 && { color: '#8a5a00' }]}>
-                      {d <= 0 ? 'Venció' : d === 1 ? 'Vence mañana' : `Vence en ${d} días`}
-                    </Text>
-                    {!estaDestacada(item) && (
-                      <TouchableOpacity style={styles.btnDestacar} onPress={() => setDestacando(item)}>
-                        <MaterialCommunityIcons name="star-four-points-outline" size={13} color="#8a5a00" />
-                        <Text style={styles.btnDestacarText}>Destacar</Text>
-                      </TouchableOpacity>
-                    )}
-                    {d <= 7 && (
-                      <TouchableOpacity style={styles.btnRenovar} onPress={() => renovar(item)}>
-                        <MaterialCommunityIcons name="refresh" size={14} color="#fff" />
-                        <Text style={styles.btnRenovarText}>Renovar</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              }
-              return d <= 7 && d > 0 ? (
-                <Text style={styles.vencAjeno}>Se da de baja en {d} {d === 1 ? 'día' : 'días'}</Text>
-              ) : null;
-            })()}
-
-            {item.autor !== yo && contactadas.includes(item.id) && (
-              calificadas.includes(item.id) ? (
-                <View style={styles.yaCalificado}>
-                  <MaterialCommunityIcons name="check-circle-outline" size={15} color="#0a7d33" />
-                  <Text style={styles.yaCalificadoText}>Ya calificaste a este rider</Text>
-                </View>
-              ) : (
+              {!!s.dias && <Text style={styles.propMeta}>{s.dias} días</Text>}
+              <View style={styles.propAcciones}>
                 <TouchableOpacity
-                  style={styles.btnCalificar}
-                  onPress={() => { setCalificando(item); setPuntaje(0); setComentario(''); }}
+                  style={[styles.propBtn, { backgroundColor: '#34C759' }]}
+                  onPress={() => resolver(s, true)}
                 >
-                  <MaterialCommunityIcons name="star-outline" size={16} color="#8a5a00" />
-                  <Text style={styles.btnCalificarText}>
-                    ¿Se concretó? Calificá a {nombres[item.autor] || 'este rider'}
+                  <MaterialCommunityIcons name="check" size={16} color="#fff" />
+                  <Text style={styles.propBtnText}>
+                    {s.tipo === 'instructor' ? 'Activar' : 'Cobré, activar'}
                   </Text>
                 </TouchableOpacity>
-              )
-            )}
-          </View>
-        ))}
-      </ScrollView>
+                <TouchableOpacity
+                  style={[styles.propBtn, { backgroundColor: '#c0392b' }]}
+                  onPress={() => resolver(s, false)}
+                >
+                  <MaterialCommunityIcons name="close" size={16} color="#fff" />
+                  <Text style={styles.propBtnText}>Rechazar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
 
-      {/* Botón publicar */}
+      {/* Reputación en el mercado */}
+      {(reputacion || resenas.length > 0) && (
+        <View style={styles.bloque}>
+          <Text style={styles.seccion}>Tu reputación en el mercado</Text>
+
+          <View style={styles.repCabecera}>
+            <View style={styles.repNumero}>
+              <Text style={styles.repPromedio}>{reputacion?.promedio ?? '—'}</Text>
+              <View style={{ flexDirection: 'row' }}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <MaterialCommunityIcons
+                    key={n}
+                    name={n <= Math.round(reputacion?.promedio || 0) ? 'star' : 'star-outline'}
+                    size={13}
+                    color="#FFB300"
+                  />
+                ))}
+              </View>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.repDetalle}>
+                {reputacion?.total || 0} {reputacion?.total === 1 ? 'calificación' : 'calificaciones'}
+              </Text>
+              {!!reputacion?.buenas && (
+                <Text style={styles.repDetalleChico}>
+                  {reputacion.buenas} de {reputacion.total} con 4 estrellas o más
+                </Text>
+              )}
+            </View>
+          </View>
+
+          {resenas.map((r) => (
+            <View key={r.id} style={styles.resena}>
+              <View style={styles.resenaTop}>
+                <Text style={styles.resenaAutor}>{nombresResenas[r.autor] || 'Rider'}</Text>
+                <View style={{ flexDirection: 'row' }}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <MaterialCommunityIcons
+                      key={n}
+                      name={n <= r.puntaje ? 'star' : 'star-outline'}
+                      size={12}
+                      color="#FFB300"
+                    />
+                  ))}
+                </View>
+              </View>
+              {!!r.comentario && <Text style={styles.resenaTexto}>{r.comentario}</Text>}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Favoritos */}
+      <View style={styles.bloque}>
+        <Text style={styles.seccion}>Mis spots favoritos</Text>
+        {favoritos.length === 0 ? (
+          <Text style={styles.vacio}>
+            Todavía no marcaste ninguno. Abrí un spot en el mapa y tocá la estrella.
+          </Text>
+        ) : (
+          <View style={styles.chips}>
+            {favoritos.map((s) => (
+              <View key={s.id} style={styles.chip}>
+                <MaterialCommunityIcons name="star" size={13} color="#FFCC00" />
+                <Text style={styles.chipText}>{s.name}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/* Historial */}
+      <View style={styles.bloque}>
+        <Text style={styles.seccion}>Historial de sesiones</Text>
+        {sesiones.length === 0 ? (
+          <Text style={styles.vacio}>
+            Todavía no registraste ninguna sesión. Entrá a la pestaña del kite y tocá "Comenzar sesión".
+          </Text>
+        ) : (
+          <>
+            {visibles.map((s) => (
+              <TouchableOpacity key={s.id} style={styles.sesion} onLongPress={() => eliminar(s)}>
+                <View style={styles.sesionTop}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.sesionSpot}>{s.spotNombre || 'Sesión sin spot'}</Text>
+                    <Text style={styles.sesionFecha}>{formatoFecha(s.fecha)}</Text>
+                  </View>
+                  {s.viento && (
+                    <View style={styles.vientoTag}>
+                      <MaterialCommunityIcons name="weather-windy" size={12} color={COLORS.primary} />
+                      <Text style={styles.vientoTagText}>
+                        {s.viento.viento} kt {s.viento.cardinal}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.sesionStats}>
+                  <SesionDato valor={formatoDuracion(s.duracionSeg)} label="Tiempo" />
+                  <SesionDato valor={`${s.distanciaKm} km`} label="Distancia" />
+                  <SesionDato valor={`${s.velMaxKt} kt`} label="Máxima" />
+                  {!!s.cantSaltos && <SesionDato valor={`${s.alturaMaxM} m`} label={`${s.cantSaltos} saltos`} />}
+                </View>
+              </TouchableOpacity>
+            ))}
+            {sesiones.length > 8 && (
+              <TouchableOpacity style={styles.verTodo} onPress={() => setVerTodo(!verTodo)}>
+                <Text style={styles.verTodoText}>
+                  {verTodo ? 'Ver menos' : `Ver las ${sesiones.length} sesiones`}
+                </Text>
+              </TouchableOpacity>
+            )}
+            <Text style={styles.ayuda}>Mantené presionada una sesión para borrarla.</Text>
+          </>
+        )}
+      </View>
+
+      {/* Instructor */}
+      <View style={styles.bloque}>
+        <Text style={styles.seccion}>¿Das clases?</Text>
+        {soyVerificado ? (
+          <>
+            <View style={styles.verifCaja}>
+              <MaterialCommunityIcons name="check-decagram" size={22} color="#0a7d33" />
+              <Text style={styles.verifTexto}>
+                Sos instructor verificado
+                {venceVerificacion
+                  ? ` hasta el ${new Date(venceVerificacion).toLocaleDateString('es-AR')}`
+                  : ''}
+                . Tus avisos aparecen primero en Clases.
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.btnPanel} onPress={() => setPanelInstructor(true)}>
+              <MaterialCommunityIcons name="view-dashboard-outline" size={19} color="#fff" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.btnPanelTitulo}>Abrir mi panel</Text>
+                <Text style={styles.btnPanelDesc}>Agenda de turnos, alcance e ingresos</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={20} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.verCondiciones} onPress={verDescargo}>
+              <MaterialCommunityIcons name="file-document-outline" size={15} color={COLORS.subtitle} />
+              <Text style={styles.verCondicionesText}>
+                Ver las condiciones que aceptaste
+                {descargoFecha
+                  ? ` · ${new Date(descargoFecha).toLocaleDateString('es-AR')}`
+                  : ''}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.btnBaja} onPress={darDeBaja}>
+              <Text style={styles.btnBajaText}>Dar de baja la verificación</Text>
+            </TouchableOpacity>
+          </>
+        ) : pedidos.some((p) => p.tipo === 'instructor') ? (
+          <>
+            <View style={styles.enEspera}>
+              <MaterialCommunityIcons name="clock-outline" size={18} color="#8a5a00" />
+              <Text style={styles.enEsperaText}>
+                Tu verificación está en revisión. Te avisamos cuando esté lista.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.btnBaja}
+              onPress={() => cancelarPedido(pedidos.find((p) => p.tipo === 'instructor'))}
+            >
+              <Text style={styles.btnBajaText}>Cancelar el pedido</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity style={styles.cajaInstructor} onPress={() => setModalInstructor(true)}>
+            <MaterialCommunityIcons name="school-outline" size={22} color={COLORS.primary} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cajaTitulo}>Pedí tu verificación como instructor</Text>
+              <Text style={styles.cajaDesc}>Agenda de turnos, alcance e ingresos · Gratis</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#c9d6e2" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Apoyo */}
+      <View style={styles.bloque}>
+        <TouchableOpacity style={styles.cajaApoyo} onPress={() => setModalApoyo(true)}>
+          <View style={styles.apoyoIconoCaja}>
+            <Image source={{ uri: PIN_BASE64 }} style={styles.apoyoIcono} resizeMode="contain" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cajaTitulo}>Bancá la app</Text>
+            <Text style={styles.cajaDesc}>
+              GUSTS es gratis y sin publicidad. Si te sirve, dale una mano.
+            </Text>
+          </View>
+        </TouchableOpacity>
+        {perfil.apoyo_total > 0 && (
+          <Text style={styles.graciasApoyo}>Ya apoyaste con USD {perfil.apoyo_total}. Gracias.</Text>
+        )}
+      </View>
+
+      {/* Bloqueados */}
+      {misBloqueados.length > 0 && (
+        <View style={styles.bloque}>
+          <Text style={styles.seccion}>Riders bloqueados</Text>
+          {misBloqueados.map((b) => (
+            <View key={b.id} style={styles.pedidoFila}>
+              <MaterialCommunityIcons name="account-cancel-outline" size={19} color="#8a9aa8" />
+              <Text style={[styles.pedidoTitulo, { flex: 1, marginLeft: 9 }]}>
+                {b.nombre || 'Rider'}
+              </Text>
+              <TouchableOpacity onPress={() => quitarBloqueo(b)}>
+                <Text style={styles.desbloquear}>Desbloquear</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Pedidos pendientes de apoyo o destacado */}
+      {pedidos.filter((p) => p.tipo !== 'instructor').length > 0 && (
+        <View style={styles.bloque}>
+          <Text style={styles.seccion}>Pedidos sin confirmar</Text>
+          {pedidos
+            .filter((p) => p.tipo !== 'instructor')
+            .map((p) => (
+              <View key={p.id} style={styles.pedidoFila}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pedidoTitulo}>
+                    {p.tipo === 'apoyo' ? 'Apoyo a la app' : 'Destacar aviso'} · USD {p.monto}
+                  </Text>
+                  <Text style={styles.pedidoDesc}>Esperando que confirmemos la transferencia</Text>
+                </View>
+                <TouchableOpacity onPress={() => cancelarPedido(p)} style={{ padding: 6 }}>
+                  <MaterialCommunityIcons name="close-circle-outline" size={20} color="#c0392b" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          <Text style={styles.pedidoNota}>
+            Los apoyos son de una sola vez, no hay nada que se cobre todos los meses.
+          </Text>
+        </View>
+      )}
+
       <TouchableOpacity
-        style={[
-          styles.fab,
-          { backgroundColor: cat.color },
-          tipo === 'instructor' && !soyInstructor && { opacity: 0.55 },
-        ]}
-        onPress={abrirFormulario}
+        style={styles.salir}
+        onPress={() =>
+          Alert.alert('Cerrar sesión', '¿Salís de tu cuenta?', [
+            { text: 'Cancelar', style: 'cancel' },
+            { text: 'Salir', style: 'destructive', onPress: () => supabase.auth.signOut() },
+          ])
+        }
       >
-        <MaterialCommunityIcons
-          name={tipo === 'instructor' && !soyInstructor ? 'lock-outline' : 'plus'}
-          size={22}
-          color="#fff"
-        />
-        <Text style={styles.fabText}>Publicar</Text>
+        <MaterialCommunityIcons name="logout" size={17} color="#c0392b" />
+        <Text style={styles.salirText}>Cerrar sesión</Text>
       </TouchableOpacity>
 
-      <DenunciaModal
-        visible={!!denunciando}
-        cerrar={() => setDenunciando(null)}
-        objetivo={denunciando}
-      />
+      <TouchableOpacity style={styles.eliminar} onPress={eliminarCuenta}>
+        <MaterialCommunityIcons name="account-remove-outline" size={16} color="#8a9aa8" />
+        <Text style={styles.eliminarText}>Eliminar mi cuenta</Text>
+      </TouchableOpacity>
 
-      {/* Destacar */}
-      <Modal
-        animationType="slide"
-        transparent
-        visible={!!destacando}
-        onRequestClose={() => setDestacando(null)}
-      >
+      <Text style={styles.pie}>
+        Tus sesiones y favoritos se guardan en este teléfono. Tu perfil viaja con tu cuenta.
+      </Text>
+
+      <View style={styles.creditoBox}>
+        <Text style={styles.creditoMarca}>GUSTS · Kitesurf App</Text>
+        <Text style={styles.creditoText}>Diseñado y creado por Gestiva</Text>
+        <TouchableOpacity
+          onPress={() =>
+            Linking.openURL('mailto:gestivagestion@gmail.com?subject=GUSTS · Contacto')
+          }
+        >
+          <Text style={styles.creditoMail}>gestivagestion@gmail.com</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Apoyo */}
+      <Modal animationType="slide" transparent visible={modalApoyo} onRequestClose={() => setModalApoyo(false)}>
         <View style={styles.overlay}>
           <View style={styles.modal}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: '#8a5a00' }]}>Destacar aviso</Text>
-              <TouchableOpacity onPress={() => setDestacando(null)}>
+              <Text style={styles.modalTitle}>Bancá la app</Text>
+              <TouchableOpacity onPress={() => setModalApoyo(false)}>
                 <MaterialCommunityIcons name="close" size={24} color={COLORS.primary} />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.calSub} numberOfLines={2}>{destacando?.titulo}</Text>
-
-            <Text style={styles.destExplica}>
-              Tu aviso aparece primero en su categoría, con una cinta amarilla. Elegí por
-              cuánto tiempo:
+            <Text style={styles.apoyoTexto}>
+              GUSTS no tiene publicidad ni vende tus datos. Lo que aporten los que la usan paga
+              el servidor y el tiempo de desarrollo. Cualquier monto suma.
             </Text>
 
-            {DESTACADOS.map((o) => (
-              <TouchableOpacity key={o.dias} style={styles.opcionPago} onPress={() => pedirDestacar(o)}>
-                <MaterialCommunityIcons name="star-four-points" size={20} color="#FFB300" />
+            {APOYOS.map((a) => (
+              <TouchableOpacity
+                key={a.monto}
+                style={styles.opcionPago}
+                onPress={() => pedir('apoyo', a.monto, null, `apoyar la app (${a.label})`)}
+              >
+                <Text style={styles.apoyoEmojiChico}>{a.monto === 2 ? '☕' : a.monto === 5 ? '🤝' : '🚀'}</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.opcionPagoTitulo}>{o.label}</Text>
-                  <Text style={styles.opcionPagoDesc}>Aparece arriba durante {o.dias} días</Text>
+                  <Text style={styles.opcionPagoTitulo}>{a.label}</Text>
+                  <Text style={styles.opcionPagoDesc}>{a.desc}</Text>
                 </View>
-                <Text style={styles.opcionPagoMonto}>USD {o.monto}</Text>
+                <Text style={styles.opcionPagoMonto}>USD {a.monto}</Text>
               </TouchableOpacity>
             ))}
 
             <Text style={styles.pagoNota}>
-              Se paga por transferencia a {COBRO.alias}. Nos mandás el comprobante y lo activamos
-              a mano, normalmente el mismo día.
+              Se transfiere a {COBRO.alias} ({COBRO.titular}). No hay nada que se desbloquee
+              pagando: la app funciona igual apoyes o no.
             </Text>
           </View>
         </View>
       </Modal>
 
-      {/* Calificar */}
-      <Modal
-        animationType="slide"
-        transparent
-        visible={!!calificando}
-        onRequestClose={() => setCalificando(null)}
-      >
+      {/* Verificación de instructor (gratis) */}
+      <Modal animationType="slide" transparent visible={modalInstructor} onRequestClose={() => setModalInstructor(false)}>
         <View style={styles.overlay}>
-          <View style={styles.modal}>
+          <View style={[styles.modal, { maxHeight: '90%' }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: COLORS.accent }]}>
-                Calificar a {calificando ? nombres[calificando.autor] || 'este rider' : ''}
-              </Text>
-              <TouchableOpacity onPress={() => setCalificando(null)}>
+              <Text style={styles.modalTitle}>Verificate como instructor</Text>
+              <TouchableOpacity onPress={() => setModalInstructor(false)}>
                 <MaterialCommunityIcons name="close" size={24} color={COLORS.primary} />
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.calSub} numberOfLines={2}>
-              {calificando?.titulo}
-            </Text>
-
-            <View style={styles.estrellas}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <TouchableOpacity key={n} onPress={() => setPuntaje(n)} style={{ padding: 4 }}>
-                  <MaterialCommunityIcons
-                    name={n <= puntaje ? 'star' : 'star-outline'}
-                    size={38}
-                    color={n <= puntaje ? '#FFB300' : '#d5dee6'}
-                  />
-                </TouchableOpacity>
+            <ScrollView contentContainerStyle={{ paddingBottom: 16 }} keyboardShouldPersistTaps="handled">
+              {INSTRUCTOR.beneficios.map((b, i) => (
+                <View key={i} style={styles.beneficio}>
+                  <MaterialCommunityIcons name="check-circle" size={17} color="#34C759" />
+                  <Text style={styles.beneficioText}>{b}</Text>
+                </View>
               ))}
+
+              {/* Descargo de responsabilidad */}
+              <View style={styles.descargoCaja}>
+                <View style={styles.descargoTop}>
+                  <MaterialCommunityIcons name="alert-circle-outline" size={17} color="#8a5a00" />
+                  <Text style={styles.descargoTitulo}>Antes de seguir, leé esto</Text>
+                </View>
+                {DESCARGO_PUNTOS.map((p, i) => (
+                  <View key={i} style={styles.descargoFila}>
+                    <Text style={styles.descargoBullet}>·</Text>
+                    <Text style={styles.descargoTexto}>{p}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={[styles.tildaCaja, tildado && styles.tildaCajaOn]}
+                onPress={() => setTildado(!tildado)}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons
+                  name={tildado ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                  size={22}
+                  color={tildado ? '#0a7d33' : '#8a9aa8'}
+                />
+                <Text style={[styles.tildaTexto, tildado && { color: '#0a5c26' }]}>
+                  Leí y acepto estas condiciones. Entiendo que GUSTS solo conecta y no
+                  responde por lo que pase en la clase ni por el pago.
+                </Text>
+              </TouchableOpacity>
+
+              {descargoOk && !!descargoFecha && (
+                <Text style={styles.descargoFecha}>
+                  Ya aceptaste estas condiciones el{' '}
+                  {new Date(descargoFecha).toLocaleDateString('es-AR')}.
+                </Text>
+              )}
+
+              <TouchableOpacity
+                style={[styles.opcionPrueba, !tildado && styles.bloqueada]}
+                disabled={!tildado}
+                onPress={pedirVerificacion}
+              >
+                <MaterialCommunityIcons name="school-outline" size={24} color="#0a7d33" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.opcionPruebaTitulo}>Pedir verificación</Text>
+                  <Text style={styles.opcionPagoDesc}>
+                    Revisamos tu perfil a mano. Sin costo.
+                  </Text>
+                </View>
+                <Text style={styles.gratis}>GRATIS</Text>
+              </TouchableOpacity>
+
+              {!tildado && (
+                <Text style={styles.avisoTilde}>
+                  Marcá la casilla de arriba para poder continuar.
+                </Text>
+              )}
+
+              <Text style={styles.pagoNota}>
+                Antes de activarte podemos pedirte tu certificación o alguna referencia. La insignia
+                es para que los alumnos sepan a quién le están escribiendo.
+              </Text>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Editar perfil */}
+      <Modal animationType="slide" transparent visible={editar} onRequestClose={() => setEditar(false)}>
+        <View style={styles.overlay}>
+          <View style={styles.modal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Editar perfil</Text>
+              <TouchableOpacity onPress={() => setEditar(false)}>
+                <MaterialCommunityIcons name="close" size={24} color={COLORS.primary} />
+              </TouchableOpacity>
             </View>
 
-            <Text style={styles.calAyuda}>
-              {puntaje === 0 ? 'Tocá las estrellas' :
-               puntaje <= 2 ? 'Mala experiencia' :
-               puntaje === 3 ? 'Estuvo bien' :
-               puntaje === 4 ? 'Muy buena' : 'Excelente'}
+            <View style={{ gap: 7 }}>
+              <Text style={styles.label}>Nombre</Text>
+              <TextInput
+                style={styles.input}
+                value={form.nombre}
+                onChangeText={(v) => setForm({ ...form, nombre: v })}
+                placeholder="Cómo te llamás"
+                placeholderTextColor="#aaa"
+              />
+            </View>
+
+            <View style={{ gap: 7, marginTop: 14 }}>
+              <Text style={styles.label}>Nivel</Text>
+              <View style={styles.opciones}>
+                {NIVELES.map((n) => (
+                  <TouchableOpacity
+                    key={n}
+                    style={[styles.opcion, form.nivel === n && styles.opcionOn]}
+                    onPress={() => setForm({ ...form, nivel: form.nivel === n ? '' : n })}
+                  >
+                    <Text style={form.nivel === n ? styles.opcionTextoOn : styles.opcionTexto}>{n}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <View style={{ flex: 1, gap: 7 }}>
+                <Text style={styles.label}>Peso (kg)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={form.peso}
+                  onChangeText={(v) => setForm({ ...form, peso: v })}
+                  placeholder="75"
+                  placeholderTextColor="#aaa"
+                  keyboardType="numeric"
+                />
+              </View>
+              <View style={{ flex: 1, gap: 7 }}>
+                <Text style={styles.label}>Navega desde</Text>
+                <TextInput
+                  style={styles.input}
+                  value={form.desde}
+                  onChangeText={(v) => setForm({ ...form, desde: v })}
+                  placeholder="2019"
+                  placeholderTextColor="#aaa"
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+
+            <Text style={styles.ayudaPeso}>
+              El peso lo usamos para afinar los tamaños de kite que te sugerimos. Solo lo ves vos.
             </Text>
 
-            <TextInput
-              style={[styles.input, { height: 90, textAlignVertical: 'top', marginTop: 14 }]}
-              value={comentario}
-              onChangeText={setComentario}
-              placeholder="Contá cómo fue: si el equipo estaba como decía, si fue puntual..."
-              placeholderTextColor="#aaa"
-              multiline
-              maxLength={500}
-            />
+            <View style={{ gap: 7, marginTop: 14 }}>
+              <Text style={styles.label}>Sobre vos</Text>
+              <TextInput
+                style={[styles.input, { height: 72, textAlignVertical: 'top' }]}
+                value={form.bio}
+                onChangeText={(v) => setForm({ ...form, bio: v })}
+                placeholder="Qué navegás, dónde parás, qué equipo usás..."
+                placeholderTextColor="#aaa"
+                multiline
+              />
+            </View>
 
-            <Text style={styles.calNota}>
-              La reseña es pública y no se puede borrar después. Escribí lo que le sirva al próximo.
-            </Text>
-
-            <TouchableOpacity
-              style={[styles.publicar, { backgroundColor: COLORS.accent }]}
-              onPress={enviarCalificacion}
-              disabled={guardando}
-            >
-              {guardando ? (
+            <TouchableOpacity style={styles.guardar} onPress={guardarPerfil} disabled={guardandoPerfil}>
+              {guardandoPerfil ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.publicarTexto}>Enviar calificación</Text>
+                <Text style={styles.guardarText}>Guardar</Text>
               )}
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
+    </ScrollView>
+  );
+}
 
-      {/* Formulario */}
-      <Modal animationType="slide" transparent visible={modal} onRequestClose={() => setModal(false)}>
-        <View style={styles.overlay}>
-          <View style={styles.modal}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: cat.color }]}>{cat.titulo}</Text>
-              <TouchableOpacity onPress={() => { setModal(false); setFotos([]); }}>
-                <MaterialCommunityIcons name="close" size={24} color={COLORS.primary} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={{ gap: 14, paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
-              {tipo === 'instructor' && (
-                <View style={styles.avisoInstructorOk}>
-                  <MaterialCommunityIcons name="shield-alert-outline" size={16} color="#0a7d33" />
-                  <Text style={styles.avisoInstructorOkText}>
-                    Al publicar confirmás que estás en condiciones de dar clases. GUSTS solo
-                    conecta: no responde por accidentes, lesiones ni por el pago del alumno.
-                  </Text>
-                </View>
-              )}
-
-              {campos.map((c) => {
-                if (c.tipo === 'opciones') {
-                  return (
-                    <View key={c.k} style={{ gap: 7 }}>
-                      <Text style={styles.label}>{c.label}</Text>
-                      <View style={styles.opciones}>
-                        {c.opciones.map((o) => (
-                          <TouchableOpacity
-                            key={o}
-                            style={[styles.opcion, form[c.k] === o && { backgroundColor: cat.color, borderColor: cat.color }]}
-                            onPress={() => setForm({ ...form, [c.k]: form[c.k] === o ? '' : o })}
-                          >
-                            <Text style={form[c.k] === o ? styles.opcionTextoOn : styles.opcionTexto}>{o}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  );
-                }
-
-                if (c.tipo === 'spot') {
-                  return (
-                    <View key={c.k} style={{ gap: 7 }}>
-                      <Text style={styles.label}>{c.label} {c.req && '*'}</Text>
-                      {form.spot ? (
-                        <View style={styles.spotElegido}>
-                          <MaterialCommunityIcons name="map-marker-check" size={17} color={cat.color} />
-                          <Text style={styles.spotElegidoTexto}>{form.spot}</Text>
-                          <TouchableOpacity onPress={() => { setForm({ ...form, spot: '' }); setBuscaSpot(''); }}>
-                            <MaterialCommunityIcons name="close-circle" size={18} color="#aaa" />
-                          </TouchableOpacity>
-                        </View>
-                      ) : (
-                        <>
-                          <TextInput
-                            style={styles.input}
-                            value={buscaSpot}
-                            onChangeText={setBuscaSpot}
-                            placeholder="Escribí para buscar el spot..."
-                            placeholderTextColor="#aaa"
-                          />
-                          {sugerencias.map((s) => (
-                            <TouchableOpacity
-                              key={s.id}
-                              style={styles.sugerencia}
-                              onPress={() => { setForm({ ...form, spot: `${s.name} (${s.region})` }); setBuscaSpot(''); }}
-                            >
-                              <MaterialCommunityIcons name="map-marker-outline" size={15} color={COLORS.subtitle} />
-                              <Text style={styles.sugerenciaTexto}>{s.name} — {s.region}</Text>
-                            </TouchableOpacity>
-                          ))}
-                        </>
-                      )}
-                    </View>
-                  );
-                }
-
-                return (
-                  <View key={c.k} style={{ gap: 7 }}>
-                    <Text style={styles.label}>{c.label} {c.req && '*'}</Text>
-                    <TextInput
-                      style={[styles.input, c.tipo === 'largo' && { height: 80, textAlignVertical: 'top' }]}
-                      value={form[c.k]}
-                      onChangeText={(v) => setForm({ ...form, [c.k]: v })}
-                      placeholder={c.ph}
-                      placeholderTextColor="#aaa"
-                      multiline={c.tipo === 'largo'}
-                    />
-                  </View>
-                );
-              })}
-
-              <View style={{ gap: 8 }}>
-                <Text style={styles.label}>Fotos (hasta {MAX_FOTOS})</Text>
-                <View style={styles.fotosFila}>
-                  {fotos.map((u) => (
-                    <View key={u}>
-                      <Image source={{ uri: u }} style={styles.fotoMini} />
-                      <TouchableOpacity style={styles.quitarFoto} onPress={() => quitarFoto(u)}>
-                        <MaterialCommunityIcons name="close" size={13} color="#fff" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                  {fotos.length < MAX_FOTOS && (
-                    <TouchableOpacity style={styles.agregarFoto} onPress={agregarFoto} disabled={subiendo}>
-                      {subiendo ? (
-                        <ActivityIndicator color={cat.color} />
-                      ) : (
-                        <>
-                          <MaterialCommunityIcons name="camera-plus-outline" size={22} color={cat.color} />
-                          <Text style={[styles.agregarFotoText, { color: cat.color }]}>Agregar</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={styles.ayuda}>
-                  Una foto real vende mucho más que la descripción.
-                </Text>
-              </View>
-
-              <View style={styles.separador} />
-
-              <View style={{ gap: 7 }}>
-                <Text style={styles.label}>Tu nombre</Text>
-                <TextInput
-                  style={styles.input}
-                  value={form.autor}
-                  onChangeText={(v) => setForm({ ...form, autor: v })}
-                  placeholder="Cómo te van a ver"
-                  placeholderTextColor="#aaa"
-                />
-              </View>
-
-              <View style={{ gap: 7 }}>
-                <Text style={styles.label}>WhatsApp o mail *</Text>
-                <TextInput
-                  style={styles.input}
-                  value={form.contacto}
-                  onChangeText={(v) => setForm({ ...form, contacto: v })}
-                  placeholder="+54 9 11 5555 5555 o tumail@gmail.com"
-                  placeholderTextColor="#aaa"
-                  autoCapitalize="none"
-                />
-                <Text style={styles.ayuda}>
-                  Con el código de país. No se muestra en el aviso: solo lo ve quien toca
-                  "Contactar".
-                </Text>
-              </View>
-
-              <Text style={styles.duracionNota}>
-                La publicación queda activa {tipo === 'alojamiento' ? '60' : '30'} días. Antes de
-                vencer te avisamos y podés renovarla con un toque.
-              </Text>
-
-              <TouchableOpacity
-                style={[styles.publicar, { backgroundColor: cat.color }]}
-                onPress={publicar}
-                disabled={guardando}
-              >
-                {guardando ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.publicarTexto}>Publicar</Text>
-                )}
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+function Stat({ valor, label, icono, destacado }) {
+  return (
+    <View style={[styles.stat, destacado && { backgroundColor: '#fff7ec', borderColor: '#ffdcb8' }]}>
+      <MaterialCommunityIcons name={icono} size={19} color={destacado ? COLORS.accent : COLORS.secondary} />
+      <Text style={styles.statValor}>{valor}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
 
-function Meta({ icon, text }) {
+function SesionDato({ valor, label }) {
   return (
-    <View style={styles.meta}>
-      <MaterialCommunityIcons name={icon} size={13} color={COLORS.subtitle} />
-      <Text style={styles.metaText}>{text}</Text>
+    <View style={{ flex: 1, alignItems: 'center' }}>
+      <Text style={styles.sesionValor}>{valor}</Text>
+      <Text style={styles.sesionLabel}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  loader: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.light },
+  header: { backgroundColor: COLORS.primary, alignItems: 'center', paddingVertical: 30 },
+  avatar: {
+    width: 78, height: 78, borderRadius: 39, backgroundColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+  },
+  avatarImg: { width: 78, height: 78, borderRadius: 39 },
+  camara: {
+    position: 'absolute', right: -2, bottom: -2, backgroundColor: '#FF9500',
+    width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#003D7A',
+  },
+  nombre: { fontSize: 21, fontWeight: 'bold', color: '#fff', marginTop: 12 },
+  subtitulo: { fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 3 },
+  bio: {
+    fontSize: 12, color: 'rgba(255,255,255,0.8)', textAlign: 'center',
+    marginTop: 8, paddingHorizontal: 34, lineHeight: 17,
+  },
+  editar: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 12,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)', borderRadius: 16,
+    paddingHorizontal: 13, paddingVertical: 6,
+  },
+  editarText: { color: '#fff', fontSize: 12, fontWeight: '600' },
 
-  tabsWrap: { backgroundColor: '#fff', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e8eef4' },
-  tabsContent: { paddingHorizontal: 12, gap: 8 },
-  catChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 13, paddingVertical: 8,
-    borderRadius: 20, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e3edf6',
-  },
-  catText: { fontSize: 12, fontWeight: 'bold', color: '#1a1a1a' },
+  bloque: { padding: 16 },
+  seccion: { fontSize: 16, fontWeight: 'bold', color: '#1a1a1a', marginBottom: 12 },
+  vacio: { fontSize: 12.5, color: COLORS.subtitle, lineHeight: 18 },
 
-  header: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, padding: 14, marginBottom: 12 },
-  headerIcon: { width: 44, height: 44 },
-  headerIconBox: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.25)',
-    alignItems: 'center', justifyContent: 'center',
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  stat: {
+    width: '31.5%', flexGrow: 1, backgroundColor: '#fff', borderRadius: 11,
+    paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: '#e8eef4',
   },
-  headerTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', letterSpacing: 0.5 },
-  headerSub: { color: 'rgba(255,255,255,0.9)', fontSize: 11, marginTop: 2 },
+  statValor: { fontSize: 19, fontWeight: 'bold', color: '#1a1a1a', marginTop: 5 },
+  statLabel: { fontSize: 9.5, color: '#999', marginTop: 2, textAlign: 'center', paddingHorizontal: 4 },
 
-  avisoPerdidos: {
-    flexDirection: 'row', gap: 8, backgroundColor: '#fdeef4', borderRadius: 10, padding: 10,
-    marginBottom: 14, borderWidth: 1, borderColor: '#f7c9dc',
+  record: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff7ec',
+    borderRadius: 10, padding: 11, marginTop: 12, borderWidth: 1, borderColor: '#ffdcb8',
   },
-  avisoPerdidosText: { flex: 1, fontSize: 11, color: '#8a2a52', lineHeight: 16 },
+  recordText: { flex: 1, fontSize: 12, color: '#8a5a00', lineHeight: 17 },
 
-  avisoInstructor: {
-    flexDirection: 'row', gap: 8, backgroundColor: '#f0edfa', borderRadius: 10, padding: 10,
-    marginBottom: 14, borderWidth: 1, borderColor: '#d4cbf0',
+  modHeader: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 12 },
+  modBadge: {
+    backgroundColor: '#FF9500', minWidth: 22, height: 22, borderRadius: 11,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6,
   },
-  avisoInstructorText: { flex: 1, fontSize: 11, color: '#4a3a8a', lineHeight: 16 },
-  avisoInstructorOk: {
-    flexDirection: 'row', gap: 8, backgroundColor: '#e9f7ee', borderRadius: 10, padding: 10,
-    marginBottom: 14, borderWidth: 1, borderColor: '#b8e2c6',
+  modBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  propuesta: {
+    backgroundColor: '#fff', borderRadius: 11, padding: 13, marginBottom: 9,
+    borderLeftWidth: 4, borderLeftColor: '#FF9500', elevation: 1,
   },
-  avisoInstructorOkText: { flex: 1, fontSize: 11, color: '#0a5c26', lineHeight: 16 },
-  notaClases: {
-    fontSize: 10.5, color: '#8a9aa8', lineHeight: 15, fontStyle: 'italic', marginTop: 9,
+  propNombre: { fontSize: 14.5, fontWeight: 'bold', color: '#1a1a1a' },
+  propMeta: { fontSize: 11, color: COLORS.subtitle, marginTop: 3 },
+  propDesc: { fontSize: 12, color: '#333', marginTop: 6, lineHeight: 17 },
+  propAcciones: { flexDirection: 'row', gap: 8, marginTop: 11 },
+  propBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 5, paddingVertical: 9, borderRadius: 8,
   },
+  propBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 12.5 },
 
-  perdidoBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
-    paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6, marginTop: 7,
+  btnPanel: {
+    flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.primary,
+    borderRadius: 12, padding: 14, marginTop: 9,
   },
-  perdidoBadgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5 },
+  btnPanelTitulo: { fontSize: 14.5, fontWeight: 'bold', color: '#fff' },
+  btnPanelDesc: { fontSize: 11.5, color: 'rgba(255,255,255,0.8)', marginTop: 2 },
 
-  cintaDestacado: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
-    backgroundColor: '#fff3cd', paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 5, marginBottom: 8, borderWidth: 1, borderColor: '#ffe0a3',
+  btnBaja: {
+    alignItems: 'center', paddingVertical: 11, marginTop: 8, borderRadius: 10,
+    backgroundColor: '#f5f7fa', borderWidth: 1, borderColor: '#e3ebf2',
   },
-  cintaTexto: { fontSize: 9.5, fontWeight: 'bold', color: '#8a5a00', letterSpacing: 0.6 },
-  verifChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#e9f7ee',
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
-    borderWidth: 1, borderColor: '#b8e2c6',
+  btnBajaText: { fontSize: 12.5, fontWeight: '600', color: COLORS.subtitle },
+
+  verCondiciones: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 10, marginTop: 6,
   },
-  verifTexto: { fontSize: 10, fontWeight: 'bold', color: '#0a7d33' },
-  btnDestacar: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#fff3cd',
-    paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
+  verCondicionesText: { fontSize: 11.5, color: COLORS.subtitle, textDecorationLine: 'underline' },
+
+  descargoCaja: {
+    backgroundColor: '#fff8e6', borderRadius: 11, padding: 13, marginTop: 6,
     borderWidth: 1, borderColor: '#ffe0a3',
   },
-  btnDestacarText: { color: '#8a5a00', fontSize: 11, fontWeight: 'bold' },
+  descargoTop: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 9 },
+  descargoTitulo: { fontSize: 13.5, fontWeight: 'bold', color: '#8a5a00' },
+  descargoFila: { flexDirection: 'row', gap: 7, marginBottom: 7 },
+  descargoBullet: { fontSize: 13, color: '#8a5a00', lineHeight: 17 },
+  descargoTexto: { flex: 1, fontSize: 11.5, color: '#6b4a10', lineHeight: 17 },
+  descargoFecha: {
+    fontSize: 10.5, color: '#0a7d33', fontStyle: 'italic', marginTop: 8, textAlign: 'center',
+  },
 
-  destExplica: { fontSize: 12.5, color: COLORS.subtitle, lineHeight: 18, marginBottom: 14 },
+  tildaCaja: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10, backgroundColor: '#f5f7fa',
+    borderRadius: 11, padding: 13, marginTop: 11, marginBottom: 4,
+    borderWidth: 1.5, borderColor: '#e3ebf2',
+  },
+  tildaCajaOn: { backgroundColor: '#e9f7ee', borderColor: '#8fd3a8' },
+  tildaTexto: { flex: 1, fontSize: 12, color: '#444', lineHeight: 17 },
+  bloqueada: { opacity: 0.4 },
+  avisoTilde: {
+    fontSize: 11, color: '#c0392b', textAlign: 'center', marginTop: 9, fontWeight: '600',
+  },
+
+  pedidoFila: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff',
+    borderRadius: 10, padding: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: '#ffe0a3',
+  },
+  pedidoTitulo: { fontSize: 13.5, fontWeight: 'bold', color: '#1a1a1a' },
+  pedidoDesc: { fontSize: 11, color: COLORS.subtitle, marginTop: 2 },
+  tocarPara: { fontSize: 10.5, color: '#c0392b', fontWeight: '600', marginTop: 8 },
+  desbloquear: { fontSize: 12.5, fontWeight: 'bold', color: COLORS.primary },
+  pedidoNota: { fontSize: 10.5, color: '#8a9aa8', fontStyle: 'italic', lineHeight: 15 },
+
+  eliminar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginHorizontal: 16, marginBottom: 10, paddingVertical: 11,
+  },
+  eliminarText: { fontSize: 12.5, color: '#8a9aa8', textDecorationLine: 'underline' },
+
+  cajaInstructor: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff',
+    borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#e8eef4',
+  },
+  cajaApoyo: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff8e6',
+    borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#ffe0a3',
+  },
+  apoyoIconoCaja: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: '#ffe0a3',
+  },
+  apoyoIcono: { width: 27, height: 21 },
+  apoyoEmojiChico: { fontSize: 22 },
+  cajaTitulo: { fontSize: 14.5, fontWeight: 'bold', color: '#1a1a1a' },
+  cajaDesc: { fontSize: 11.5, color: COLORS.subtitle, marginTop: 2, lineHeight: 16 },
+  graciasApoyo: { fontSize: 11, color: '#8a5a00', marginTop: 8, textAlign: 'center', fontStyle: 'italic' },
+  verifCaja: {
+    flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: '#e9f7ee',
+    borderRadius: 12, padding: 14, borderWidth: 1, borderColor: '#b8e2c6',
+  },
+  verifTexto: { flex: 1, fontSize: 12.5, color: '#0a5c26', lineHeight: 17 },
+  enEspera: {
+    flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#fff6ec',
+    borderRadius: 12, padding: 13, borderWidth: 1, borderColor: '#ffdcb8',
+  },
+  enEsperaText: { flex: 1, fontSize: 12, color: '#8a5a00', lineHeight: 17 },
+
+  opcionPrueba: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#e9f7ee',
+    borderRadius: 11, padding: 14, borderWidth: 1.5, borderColor: '#8fd3a8', marginTop: 6,
+  },
+  opcionPruebaTitulo: { fontSize: 15, fontWeight: 'bold', color: '#0a5c26' },
+  gratis: { fontSize: 13, fontWeight: 'bold', color: '#0a7d33', letterSpacing: 0.5 },
+
+  apoyoTexto: { fontSize: 13, color: '#444', lineHeight: 19, marginBottom: 14 },
   opcionPago: {
     flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#fff',
-    borderRadius: 11, padding: 14, marginBottom: 9,
-    borderWidth: 1.5, borderColor: '#ffe0a3',
+    borderRadius: 11, padding: 14, marginBottom: 9, borderWidth: 1.5, borderColor: '#e8eef4',
   },
   opcionPagoTitulo: { fontSize: 14.5, fontWeight: 'bold', color: '#1a1a1a' },
   opcionPagoDesc: { fontSize: 11.5, color: COLORS.subtitle, marginTop: 2 },
-  opcionPagoMonto: { fontSize: 16, fontWeight: 'bold', color: '#8a5a00' },
-  pagoNota: { fontSize: 10.5, color: '#8a9aa8', lineHeight: 15, fontStyle: 'italic', marginTop: 6 },
+  opcionPagoMonto: { fontSize: 16, fontWeight: 'bold', color: COLORS.primary },
+  pagoNota: { fontSize: 10.5, color: '#8a9aa8', lineHeight: 15, fontStyle: 'italic', marginTop: 4 },
+  beneficio: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, marginBottom: 9 },
+  beneficioText: { flex: 1, fontSize: 13, color: '#333', lineHeight: 18 },
 
-  fotoAviso: { width: 130, height: 98, borderRadius: 9, backgroundColor: '#e8eef4' },
-  fotosFila: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
-  fotoMini: { width: 76, height: 76, borderRadius: 9, backgroundColor: '#e8eef4' },
-  quitarFoto: {
-    position: 'absolute', top: -5, right: -5, backgroundColor: '#c0392b',
-    width: 21, height: 21, borderRadius: 11, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1.5, borderColor: '#fff',
+  repCabecera: {
+    flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#fff',
+    borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#e8eef4',
   },
-  agregarFoto: {
-    width: 76, height: 76, borderRadius: 9, borderWidth: 1.5, borderStyle: 'dashed',
-    borderColor: '#c9d6e2', alignItems: 'center', justifyContent: 'center', gap: 2,
+  repNumero: { alignItems: 'center' },
+  repPromedio: { fontSize: 30, fontWeight: 'bold', color: '#8a5a00' },
+  repDetalle: { fontSize: 13, fontWeight: '600', color: '#1a1a1a' },
+  repDetalleChico: { fontSize: 11, color: COLORS.subtitle, marginTop: 2 },
+  resena: {
+    backgroundColor: '#fff', borderRadius: 10, padding: 12, marginBottom: 8,
+    borderLeftWidth: 3, borderLeftColor: '#FFB300',
   },
-  agregarFotoText: { fontSize: 10.5, fontWeight: '600' },
+  resenaTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  resenaAutor: { fontSize: 13, fontWeight: 'bold', color: '#1a1a1a' },
+  resenaTexto: { fontSize: 12.5, color: '#444', marginTop: 5, lineHeight: 17 },
 
-  vencRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 10 },
-  vencText: { flex: 1, fontSize: 11, color: '#8a9aa8', fontWeight: '600' },
-  vencAjeno: { fontSize: 10.5, color: '#8a5a00', marginTop: 8, fontStyle: 'italic' },
-  btnRenovar: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.primary,
-    paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#fff',
+    borderRadius: 16, paddingHorizontal: 11, paddingVertical: 7,
+    borderWidth: 1, borderColor: '#e8eef4',
   },
-  btnRenovarText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-  duracionNota: { fontSize: 10.5, color: '#8a9aa8', lineHeight: 15, fontStyle: 'italic' },
+  chipText: { fontSize: 12, fontWeight: '600', color: '#1a1a1a' },
 
-  autorFila: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  autorLinea: { fontSize: 10.5, color: '#8a9aa8', fontStyle: 'italic' },
-  repChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#fff8e6',
-    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6,
-    borderWidth: 1, borderColor: '#ffe0a3',
+  sesion: { backgroundColor: '#fff', borderRadius: 11, padding: 13, marginBottom: 9, elevation: 1 },
+  sesionTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
+  sesionSpot: { fontSize: 14, fontWeight: 'bold', color: '#1a1a1a' },
+  sesionFecha: { fontSize: 11, color: COLORS.subtitle, marginTop: 2 },
+  vientoTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#eef4fa',
+    borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4,
   },
-  repTexto: { fontSize: 11, fontWeight: 'bold', color: '#8a5a00' },
-  sinRep: { fontSize: 10, color: '#c0cad3', fontStyle: 'italic' },
+  vientoTagText: { fontSize: 10.5, fontWeight: '600', color: COLORS.primary },
+  sesionStats: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#f0f4f8', paddingTop: 9 },
+  sesionValor: { fontSize: 14, fontWeight: 'bold', color: '#1a1a1a' },
+  sesionLabel: { fontSize: 10, color: '#999', marginTop: 1 },
 
-  btnCalificar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#fff8e6', borderRadius: 9, paddingVertical: 10, marginTop: 8,
-    borderWidth: 1, borderColor: '#ffe0a3',
+  verTodo: { alignItems: 'center', paddingVertical: 10 },
+  verTodoText: { fontSize: 12.5, fontWeight: 'bold', color: COLORS.primary },
+  ayuda: { fontSize: 10.5, color: '#8a9aa8', textAlign: 'center', fontStyle: 'italic' },
+  salir: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+    marginHorizontal: 16, marginBottom: 18, paddingVertical: 13, borderRadius: 10,
+    backgroundColor: '#fdf0ee', borderWidth: 1, borderColor: '#f5c6c0',
   },
-  btnCalificarText: { fontSize: 12, fontWeight: 'bold', color: '#8a5a00' },
-  yaCalificado: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    marginTop: 9,
-  },
-  yaCalificadoText: { fontSize: 11, color: '#0a7d33', fontWeight: '600' },
+  salirText: { fontSize: 13.5, fontWeight: 'bold', color: '#c0392b' },
+  pie: { fontSize: 11, color: '#8a9aa8', textAlign: 'center', paddingHorizontal: 24, lineHeight: 16 },
 
-  calSub: { fontSize: 13, color: COLORS.subtitle, marginBottom: 4 },
-  estrellas: { flexDirection: 'row', justifyContent: 'center', marginTop: 12 },
-  calAyuda: { fontSize: 13, fontWeight: '600', color: '#1a1a1a', textAlign: 'center', marginTop: 4 },
-  calNota: { fontSize: 10.5, color: '#8a9aa8', marginTop: 10, lineHeight: 15, fontStyle: 'italic' },
-
-  vacio: { alignItems: 'center', paddingVertical: 50 },
-  vacioTitulo: { fontSize: 15, fontWeight: 'bold', color: '#1a1a1a', marginTop: 12 },
-  vacioTexto: { fontSize: 12, color: COLORS.subtitle, marginTop: 4, textAlign: 'center', paddingHorizontal: 30 },
-
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, borderLeftWidth: 4, elevation: 2 },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  cardTitle: { flex: 1, fontSize: 15, fontWeight: 'bold', color: '#1a1a1a' },
-  precio: { fontSize: 16, fontWeight: 'bold', marginTop: 4 },
-  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 },
-  meta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  metaText: { fontSize: 11, color: COLORS.subtitle },
-  detalle: { fontSize: 12.5, color: '#333', lineHeight: 18, marginTop: 9 },
-
-  acciones: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  btn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 10, borderRadius: 9,
-  },
-  btnText: { color: '#fff', fontWeight: 'bold', fontSize: 12.5 },
-  btnGhost: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 10, borderRadius: 9, backgroundColor: '#eef4fa',
-    borderWidth: 1, borderColor: '#d5e3f0',
-  },
-  btnGhostText: { color: COLORS.primary, fontWeight: 'bold', fontSize: 12.5 },
-
-  fab: {
-    position: 'absolute', right: 16, bottom: 18, flexDirection: 'row', alignItems: 'center',
-    gap: 6, paddingHorizontal: 18, paddingVertical: 13, borderRadius: 26, elevation: 5,
-    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 5, shadowOffset: { width: 0, height: 3 },
-  },
-  fabText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+  creditoBox: { alignItems: 'center', paddingTop: 24, paddingBottom: 34 },
+  creditoMarca: { fontSize: 11, fontWeight: 'bold', color: '#b0bcc7', letterSpacing: 1 },
+  creditoText: { fontSize: 10.5, color: '#b0bcc7', marginTop: 5 },
+  creditoMail: { fontSize: 10.5, color: '#8fa8bd', marginTop: 3, textDecorationLine: 'underline' },
 
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modal: {
     backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingTop: 18, paddingHorizontal: 16, paddingBottom: 26, maxHeight: '90%',
+    paddingTop: 18, paddingHorizontal: 16, paddingBottom: 28,
   },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  modalTitle: { fontSize: 19, fontWeight: 'bold' },
-
+  modalTitle: { fontSize: 19, fontWeight: 'bold', color: COLORS.primary },
   label: { fontSize: 13, fontWeight: '600', color: '#1a1a1a' },
   input: {
     backgroundColor: '#f5f5f5', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
     borderWidth: 1, borderColor: '#dde6ee', fontSize: 14, color: '#000',
   },
-  ayuda: { fontSize: 10.5, color: '#8a9aa8', fontStyle: 'italic' },
   opciones: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   opcion: {
     paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
     backgroundColor: '#f5f5f5', borderWidth: 1, borderColor: '#e0e0e0',
   },
+  opcionOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   opcionTexto: { fontSize: 12, fontWeight: '600', color: COLORS.subtitle },
   opcionTextoOn: { fontSize: 12, fontWeight: '600', color: '#fff' },
-
-  sugerencia: {
-    flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 9,
-    paddingHorizontal: 10, backgroundColor: '#f5f9fc', borderRadius: 8,
-  },
-  sugerenciaTexto: { fontSize: 12.5, color: '#1a1a1a' },
-  spotElegido: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#f0f7fc',
-    borderRadius: 8, padding: 11, borderWidth: 1, borderColor: '#d5e3f0',
-  },
-  spotElegidoTexto: { flex: 1, fontSize: 13, fontWeight: '600', color: '#1a1a1a' },
-
-  separador: { height: 1, backgroundColor: '#eef2f6', marginVertical: 4 },
-  publicar: { paddingVertical: 14, borderRadius: 9, alignItems: 'center', marginTop: 8 },
-  publicarTexto: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  ayudaPeso: { fontSize: 10.5, color: '#8a9aa8', fontStyle: 'italic', marginTop: 8 },
+  guardar: { backgroundColor: COLORS.primary, paddingVertical: 14, borderRadius: 9, alignItems: 'center', marginTop: 18 },
+  guardarText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
 });
