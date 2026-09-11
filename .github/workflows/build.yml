@@ -7,32 +7,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-
       - name: Install dependencies
         run: npm install --legacy-peer-deps
-
       - name: Remove lock file
         run: rm -f package-lock.json
-
       - name: Prebuild Android project
         run: npx expo prebuild --platform android
-
-      - name: Build debug APK
-        run: cd android && ./gradlew assembleDebug --no-daemon
-
+      - name: Build release APK
+        run: cd android && ./gradlew assembleRelease --no-daemon
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: gusts-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: gusts-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
