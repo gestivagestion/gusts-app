@@ -1,8 +1,6 @@
-name: EAS Build Android
-
+name: Build Android APK (local)
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,12 +13,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup EAS
-        uses: expo/expo-github-action@v8
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-          packager: npm
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
@@ -28,7 +25,14 @@ jobs:
       - name: Remove lock file
         run: rm -f package-lock.json
 
-      - name: Build Android APK
-        env:
-          EAS_BUILD_SKIP_LOCKFILE_CHECK: 1
-        run: eas build --platform android --profile preview --non-interactive
+      - name: Prebuild Android project
+        run: npx expo prebuild --platform android
+
+      - name: Build debug APK
+        run: cd android && ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gusts-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
