@@ -24,6 +24,7 @@ export default function AuthScreen() {
   const [verPass, setVerPass] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState('');
+  const [aceptaPoliticas, setAceptaPoliticas] = useState(false);
 
   const esRegistro = modo === 'registro';
 
@@ -39,6 +40,10 @@ export default function AuthScreen() {
     }
     if (pass.length < 6) {
       setError('La contraseña tiene que tener al menos 6 caracteres.');
+      return;
+    }
+    if (esRegistro && !aceptaPoliticas) {
+      setError('Tenés que aceptar la política de privacidad para crear la cuenta.');
       return;
     }
 
@@ -160,6 +165,29 @@ export default function AuthScreen() {
             </View>
           </View>
 
+          {esRegistro && (
+            <TouchableOpacity
+              style={styles.tildaFila}
+              onPress={() => setAceptaPoliticas(!aceptaPoliticas)}
+              activeOpacity={0.8}
+            >
+              <MaterialCommunityIcons
+                name={aceptaPoliticas ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                size={21}
+                color={aceptaPoliticas ? COLORS.primary : '#aaa'}
+              />
+              <Text style={styles.tildaTexto}>
+                Acepto la{' '}
+                <Text
+                  style={styles.tildaLink}
+                  onPress={() => Linking.openURL('https://gustskite.com/').catch(() => {})}
+                >
+                  política de privacidad
+                </Text>
+              </Text>
+            </TouchableOpacity>
+          )}
+
           {!!error && (
             <View style={styles.errorBox}>
               <MaterialCommunityIcons name="alert-circle-outline" size={16} color="#c0392b" />
@@ -185,6 +213,16 @@ export default function AuthScreen() {
         <Text style={styles.pie}>
           Necesitás una cuenta para publicar, anotarte a eventos y hablar con otros riders.
         </Text>
+
+        <View style={styles.linksFooter}>
+          <TouchableOpacity onPress={() => Linking.openURL('https://gustskite.com/').catch(() => {})}>
+            <Text style={styles.linkFooterText}>Política de privacidad</Text>
+          </TouchableOpacity>
+          <Text style={styles.linksSeparador}>·</Text>
+          <TouchableOpacity onPress={() => Linking.openURL('https://eliminar.gustskite.com/').catch(() => {})}>
+            <Text style={styles.linkFooterText}>Eliminar cuenta</Text>
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity
           style={styles.credito}
@@ -228,6 +266,12 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 9, borderBottomRightRadius: 9,
   },
 
+  tildaFila: {
+    flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 14, marginTop: 2,
+  },
+  tildaTexto: { flex: 1, fontSize: 12.5, color: '#444', lineHeight: 17 },
+  tildaLink: { color: COLORS.primary, fontWeight: '600', textDecorationLine: 'underline' },
+
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#fdf0ee',
     borderRadius: 9, padding: 11, marginBottom: 14, borderWidth: 1, borderColor: '#f5c6c0',
@@ -245,7 +289,15 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.7)', fontSize: 11.5, textAlign: 'center',
     marginTop: 24, lineHeight: 17, paddingHorizontal: 10,
   },
-  credito: { marginTop: 22, alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 10 },
+  linksFooter: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    gap: 8, marginTop: 14,
+  },
+  linkFooterText: {
+    color: 'rgba(255,255,255,0.75)', fontSize: 11.5, textDecorationLine: 'underline',
+  },
+  linksSeparador: { color: 'rgba(255,255,255,0.4)', fontSize: 11.5 },
+  credito: { marginTop: 18, alignSelf: 'center', paddingVertical: 6, paddingHorizontal: 10 },
   creditoText: {
     color: 'rgba(255,255,255,0.45)', fontSize: 10.5, letterSpacing: 0.6, textAlign: 'center',
   },
